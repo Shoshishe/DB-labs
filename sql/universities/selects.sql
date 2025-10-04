@@ -15,7 +15,7 @@ END
 $$:
 
 CREATE OR REPLACE PROCEDURE universities_name_fuzzy(name text)
-LANGUAGE SQL
+LANGUAGE plpgSQL
 AS $$
 BEGIN
     SELECT id, full_name, shorthand FROM universities WHERE daitch_mokotoff(full_name) && daitch_mokotoff(name)
