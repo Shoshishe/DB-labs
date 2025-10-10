@@ -1,23 +1,23 @@
-CREATE OR REPLACE PROCEDURE universities_select()
-LANGUAGE SQL
+CREATE OR REPLACE FUNCTION universities_select() RETURNS TABLE (uni_id uuid, uni_name text, uni_shorthand text)
+LANGUAGE plpgsql
 AS $$
 BEGIN
-    SELECT id, full_name, shorthand FROM universities;
+    RETURN QUERY SELECT id, full_name, shorthand FROM universities;
 END
 $$;
 
-CREATE OR REPLACE PROCEDURE universitires_id_select(uni_id uuid)
-LANGUAGE SQL
+CREATE OR REPLACE FUNCTION universitires_id_select(uni_id uuid) RETURNS TABLE (uni_name text, uni_shorthand text)
+LANGUAGE plpgsql
 AS $$
 BEGIN
-    SELECT full_name, shorthand FROM universities WHERE id=uni_id;
+    RETURN QUERY SELECT full_name, shorthand FROM universities WHERE id=uni_id;
 END
-$$:
+$$;
 
-CREATE OR REPLACE PROCEDURE universities_name_fuzzy(name text)
+CREATE OR REPLACE FUNCTION universities_name_fuzzy(name text) RETURNS TABLE (uni_id uuid, uni_name text, uni_shorthand text)
 LANGUAGE plpgSQL
 AS $$
 BEGIN
-    SELECT id, full_name, shorthand FROM universities WHERE daitch_mokotoff(full_name) && daitch_mokotoff(name)
+    RETURN QUERY SELECT id, full_name, shorthand FROM universities WHERE daitch_mokotoff(full_name) && daitch_mokotoff(name);
 END
 $$;

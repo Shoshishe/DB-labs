@@ -23,4 +23,11 @@ BEGIN
 END
 $$;
 
-
+CREATE OR REPLACE PROCEDURE students_by_group(group_id UUID) 
+LANGUAGE plpgsql
+as $$
+BEGIN
+    SELECT u.id, u.university_id, u.name, u.surname, u.patronymic, u.email, g.name FROM users AS u INNER JOIN students AS s ON s.user_id = u.id INNER JOIN groups AS g on s.group_id=g.id WHERE u.id=id;
+END;
+END
+$$;

@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS students (
 	user_id uuid NOT NULL,
 	group_id uuid NOT NULL,
 
-	CONSTRAINT unq_students_user_id UNIQUE (user_id),
+	CONSTRAINT unq_students UNIQUE (user_id, group_id),
 	CONSTRAINT fk_students_group FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE RESTRICT ON UPDATE CASCADE,
 	CONSTRAINT fk_students_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE
 );
@@ -146,10 +146,11 @@ CREATE TABLE IF NOT EXISTS lessons (
 
 CREATE TABLE IF NOT EXISTS skipped_hours (
 	student_id uuid NOT NULL,
+	group_id uuid NOT NULL,
 	skipped_hours bigint NOT NULL CHECK (skipped_hours >=0 ),
 	skipped_lesson_id uuid NOT NULL,
 
-	CONSTRAINT fk_skipped_hours_students FOREIGN KEY (student_id) REFERENCES students(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
+	CONSTRAINT fk_skipped_hours_students FOREIGN KEY (student_id, group_id) REFERENCES students(user_id, group_id) ON DELETE CASCADE ON UPDATE CASCADE,
 	CONSTRAINT fk_skipped_hours_lessons FOREIGN KEY (skipped_lesson_id) REFERENCES lessons(id) ON DELETE CASCADE ON UPDATE CASCADE
 );
 
@@ -157,9 +158,11 @@ CREATE INDEX IF NOT EXISTS skipped_hours_user_id_idx ON skipped_hours (student_i
 
 CREATE TABLE IF NOT EXISTS grades (
 	student_id uuid NOT NULL,
+	group_id uuid NOT NULL,
 	grade smallint NOT NULL CHECK (grade>=0),
 	lesson_id uuid NOT NULL,
 
+	CONSTRAINT fk_grades_student_id FOREIGN KEY (student_id, group_id) REFERENCES students(user_id, group_id) ON DELETE CASCADE ON UPDATE CASCADE,
 	CONSTRAINT fk_grades_lesson_id FOREIGN KEY (lesson_id) REFERENCES lessons(id) ON DELETE CASCADE ON UPDATE CASCADE
 );
 
