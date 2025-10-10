@@ -1,4 +1,6 @@
-CREATE EXTENSION fuzzystrmatch;
+CREATE SCHEMA IF NOT EXISTS schema_iis;
+
+CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;
 
 CREATE TABLE IF NOT EXISTS lessons_types (
 	id smallint NOT NULL GENERATED ALWAYS AS IDENTITY,
@@ -8,28 +10,18 @@ CREATE TABLE IF NOT EXISTS lessons_types (
 	CONSTRAINT lessons_types_uq UNIQUE (name)
 );
 
-CREATE TABLE IF NOT EXISTS roles (
-	id smallint NOT NULL GENERATED ALWAYS AS IDENTITY,
-	name text NOT NULL,
-	university_id uuid NOT NULL,
-	
-	CONSTRAINT fk_users_universities FOREIGN KEY (university_id) REFERENCES universities(id) ON DELETE RESTRICT ON UPDATE RESTRICT
-	CONSTRAINT roles_name_check CHECK(LENGTH(NAME) < 20),
-	CONSTRAINT pk_roles_0 PRIMARY KEY (id)
-);
-
 CREATE TABLE IF NOT EXISTS universities (
 	id uuid NOT NULL DEFAULT gen_random_uuid(),
 	full_name text NOT NULL,
 	shorthand text NOT NULL,
 	
-	CONSTRAINT universities_full_name_ck CHECK(LENGTH(full_name) < 50),
+	CONSTRAINT universities_full_name_ck CHECK(LENGTH(full_name) < 100),
 	CONSTRAINT universities_shorthand_ck CHECK(LENGTH(shorthand) < 10),
 	CONSTRAINT pk_universities PRIMARY KEY (id),
 	CONSTRAINT universities_name_uq UNIQUE (full_name)
 );
 
-CREATE INDEX universities_names_idx ON universities USING gin (daitch_mokotoff(full_name)) WITH (fastupdate = off);
+CREATE INDEX IF NOT EXISTS universities_names_idx ON universities USING gin (daitch_mokotoff(full_name)) WITH (fastupdate = off);
 
 CREATE TABLE IF NOT EXISTS users (
 	password text NOT NULL,
@@ -44,7 +36,15 @@ CREATE TABLE IF NOT EXISTS users (
 	CONSTRAINT users_password_ck CHECK(LENGTH(password) < 256),
 	CONSTRAINT users_email_ck CHECK(LENGTH(email) < 50),
 	CONSTRAINT users_patronymic_ck CHECK(LENGTH(patronymic) < 50),
-	CONSTRAINT pk_users PRIMARY KEY (id),
+	CONSTRAINT pk_users PRIMARY KEY (id)
+);
+
+CREATE TABLE IF NOT EXISTS roles (
+	id smallint NOT NULL GENERATED ALWAYS AS IDENTITY,
+	name text NOT NULL,
+
+	CONSTRAINT roles_name_check CHECK(LENGTH(NAME) < 20),
+	CONSTRAINT pk_roles_0 PRIMARY KEY (id)
 );
 
 CREATE TABLE IF NOT EXISTS faculties (
@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS lessons_prototype (
 	name text NOT NULL,
 	lesson_type smallint NOT NULL,
 
+	CONSTRAINT uq_lessons_prototype UNIQUE (name, lesson_type),
 	CONSTRAINT pk_lessons_prototype PRIMARY KEY (id),
 	CONSTRAINT fk_lessons_prototype_types FOREIGN KEY (lesson_type) REFERENCES lessons_types(id) ON DELETE RESTRICT ON UPDATE RESTRICT
 );
@@ -126,7 +127,9 @@ CREATE TABLE IF NOT EXISTS teachers_to_lessons (
 CREATE TABLE IF NOT EXISTS user_roles (
 	role_id smallint NOT NULL,
 	user_id uuid NOT NULL,
-
+    university_id uuid NOT NULL,
+	
+	CONSTRAINT fk_users_universities FOREIGN KEY (university_id) REFERENCES universities(id) ON DELETE RESTRICT ON UPDATE RESTRICT,
 	CONSTRAINT fk_user_roles_roles_id FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE RESTRICT ON UPDATE RESTRICT,
 	CONSTRAINT fk_user_roles_users FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE
 );
