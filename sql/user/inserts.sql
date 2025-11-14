@@ -7,7 +7,7 @@ DECLARE
    patronymics TEXT[] := ARRAY['Pavlovich', 'Andreevich', 'Aliakseevich', 'Vadimovich', 'Nikitov', 'Nazarovich'];
    row RECORD;
 BEGIN
-  FOR i in 1..500 LOOP
+   FOR i in 1..500 LOOP
       INSERT into users (surname, name, patronymic, email, password) 
       SELECT surnames[1 + trunc(random() * 6)::int],
       names[1 + trunc(random() * 8)::int],

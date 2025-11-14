@@ -4,7 +4,7 @@ AS $$
 BEGIN 
     RETURN QUERY SELECT AVG(CAST(grd.grade AS FLOAT)), s.user_id FROM groups as grp 
     INNER JOIN students as s ON s.group_id = selected_group
-    INNER JOIN grades as grd ON grd.student_id=s.user_id GROUP BY s.user_id 
+    INNER JOIN grades as grd ON grd.student_id=s.user_id GROUP BY s.user_id  
     ORDER BY AVG(grd.grade);
 END
 $$;
