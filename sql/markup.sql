@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS faculties (
 );
 
 CREATE TABLE IF NOT EXISTS groups (
+	id uuid NOT NULL DEFAULT gen_random_uuid(),
 	name text NOT NULL,
 	faculty_id uuid NOT NULL,
 
@@ -175,7 +176,7 @@ CREATE TABLE IF NOT EXISTS lessons (
 CREATE TABLE IF NOT EXISTS skipped_hours (
 	student_id uuid NOT NULL,
 	group_id uuid NOT NULL,
-	skipped_hours bigint NOT NULL CHECK (skipped_hours >=0 ),
+	skipped_hours bigint NOT NULL CHECK (skipped_hours >=0),
 	lesson_id uuid NOT NULL,
 	is_legitimate BOOLEAN NOT NULL DEFAULT FALSE,
 
@@ -189,7 +190,7 @@ BEGIN
 	IF EXISTS(SELECT 1 FROM omissions AS o 
 				INNER JOIN skipped_hours AS sh ON sh.student_id=o.student_id 
 				INNER JOIN lessons as l ON l.id=sh.lesson_id 
-				WHERE o.end_time >= l.start_time) THEN
+				WHERE o.end_time >= l.lesson_start) THEN
 			NEW.is_legitimate=TRUE;
 	END IF;	
 END;
@@ -202,19 +203,19 @@ BEGIN
 	IF (TG_OP='INSERT') THEN	
 		UPDATE skipped_hours AS sh SET is_legitimate=TRUE
 		FROM lessons AS l WHERE sh.lesson_id=l.id 
-		AND sh.student_id = NEW.student_id AND l.start_time <= new.end_time;
+		AND sh.student_id = NEW.student_id AND l.lesson_start <= new.end_time;
 	ELSIF (TG_OP='DELETE') THEN
 		UPDATE skipped_hours AS sh SET is_legitimate=FALSE 
 		FROM lessons AS l WHERE sh.lesson_id=l.id 
-		AND sh.student_id = OLD.student_id AND l.start_time <= OLD.end_time;	
+		AND sh.student_id = OLD.student_id AND l.lesson_start <= OLD.end_time;	
 	ELSIF (TG_OP='UPDATE') THEN
 		UPDATE skipped_hours AS sh SET is_legitimate=FALSE 
 		FROM lessons AS l WHERE sh.lesson_id=l.id 
-		AND sh.student_id = OLD.student_id AND l.start_time <= OLD.end_time;	
+		AND sh.student_id = OLD.student_id AND l.lesson_start <= OLD.end_time;	
 
 		UPDATE skipped_hours AS sh SET is_legitimate=TRUE
 		FROM lessons AS l WHERE sh.lesson_id=l.id 
-		AND sh.student_id = NEW.student_id AND l.start_time <= new.end_time;
+		AND sh.student_id = NEW.student_id AND l.lesson_start <= new.end_time;
 	END IF;
 END;
 $$ LANGUAGE PLPGSQL;
@@ -243,14 +244,15 @@ DECLARE
     old_values jsonb;
     user_id uuid;
 BEGIN
-	new_values = '{}';
-	old_values = '{}';
+	new_values = '{}'::jsonb;
+	old_values = '{}'::jsonb;
 
 	IF (TG_OP='INSERT') THEN 
 		new_data := to_jsonb(NEW);
 		new_values := new_data;
-		INSERT INTO audit_log_inserts (table_name, old_values, new_values) 
-		VALUES (TG_TABLE_NAME, old_values, new_values);
+		INSERT INTO audit_log_inserts (table_name, new_values) 
+		VALUES (TG_TABLE_NAME, new_values);
+		
 		RETURN NEW;
 
 	ELSIF (TG_OP='UPDATE') THEN
@@ -289,7 +291,7 @@ DECLARE
 _sql TEXT;
 BEGIN 
 	FOR _sql IN SELECT CONCAT('DROP TRIGGER IF EXISTS tg_audit_', quote_ident(it.table_name), ' ON ', quote_ident(it.table_name), '; CREATE TRIGGER tg_audit_',quote_ident(it.table_name), ' AFTER INSERT OR UPDATE OR DELETE ON ', quote_ident(it.table_name), 
-	' FOR EACH STATEMENT EXECUTE PROCEDURE audit_trigger();') FROM information_schema.tables as it WHERE it.table_schema not in ('pg_catalog', 'information_schema') AND it.table_schema NOT LIKE 'pg_toast%' AND EXISTS(SELECT 1 FROM information_schema.columns as ic WHERE ic.column_name='id' AND ic.table_name=it.table_name) LOOP
+	' FOR EACH ROW EXECUTE PROCEDURE audit_trigger();') FROM information_schema.tables as it WHERE it.table_schema not in ('pg_catalog', 'information_schema') AND it.table_schema NOT LIKE 'pg_toast%' AND EXISTS(SELECT 1 FROM information_schema.columns as ic WHERE ic.column_name='id' AND ic.table_name=it.table_name) LOOP
 	EXECUTE TRIM('\"' FROM _sql);
 	END LOOP;
 END;
@@ -297,4 +299,17 @@ $$ LANGUAGE PLPGSQL;
 
 CALL DDL_APPLY_AUDIT_TRIGGER();
 
-
+CREATE OR REPLACE PROCEDURE global_setup() 
+LANGUAGE PLPGSQL
+AS $$
+BEGIN 
+ call universities_setup();
+ call faculties_setup();
+ call groups_setup();
+ call users_setup();
+ call lessons_setup();
+ call hours_setup();
+ call omissions_setup();
+ call grades_setup();
+END;
+$$;
