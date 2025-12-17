@@ -3,6 +3,8 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   RETURN QUERY SELECT t.photo_name, u.surname, u.name, u.patronymic, u.email, u.university_id FROM teachers as t 
-  INNER join users as u on u.id=t.user_id WHERE t.user_id=user_id 
+  INNER join users as u on u.id=t.user_id WHERE t.user_id=user_id;
 END
 $$;
+
+

@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION group_skipped_ordered(selected_id UUID) RETURNS TABLE (skipped_hours bigint, group_name text)
+CREATE OR REPLACE FUNCTION group_skipped_ordered() RETURNS TABLE (skipped_hours bigint, group_name text)
 LANGUAGE plpgsql
 AS $$
 BEGIN 

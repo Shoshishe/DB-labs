@@ -3,10 +3,12 @@ package ioc
 import (
 	"database/sql"
 	"db_labs/ioc/constants"
+	repository "db_labs/repository/postgres"
 	"fmt"
-	_ "github.com/lib/pq"
 	"log/slog"
 	"os"
+
+	_ "github.com/lib/pq"
 	"sigs.k8s.io/yaml"
 )
 
@@ -29,11 +31,34 @@ var UsePgConnection = provider(
 			slog.Error(fmt.Errorf("Failed to unmarshal yaml config at path %v: %w", constants.PostgresConfPath, err).Error())
 			os.Exit(1)
 		}
-		db, err := sql.Open("postgres", conf.Db)
+		db, err := sql.Open("postgres", fmt.Sprintf("host=%s port=%d password=%s sslmode=disable dbname=%s", conf.Host, conf.Port, os.Getenv("DB_PASSWORD"), conf.Db))
+		if err != nil {
+			slog.Error(fmt.Errorf("Failed to connect to postgres database with given config: %w", err).Error())
+			os.Exit(1)
+		}
+		err = db.Ping()
 		if err != nil {
 			slog.Error(fmt.Errorf("Failed to connect to postgres database with given config: %w", err).Error())
 			os.Exit(1)
 		}
 		return db
+	},
+)
+
+var UseUniversitiesRepo = provider(
+	func() repository.UniversitiesRepository {
+		return *repository.NewUniversitiesRepository(UsePgConnection())
+	},
+)
+
+var useFacultiesRepo = provider(
+	func() repository.FacultiesRepository {
+		return *repository.NewFacultiesRepository(UsePgConnection())
+	},
+)
+
+var useLessonsRepo = provider(
+	func() repository.LessonsRepository {
+		return *repository.NewLessonsRepository(UsePgConnection())
 	},
 )
