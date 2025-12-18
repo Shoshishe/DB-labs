@@ -1,4 +1,4 @@
-package repository
+package postgres
 
 import (
 	"context"
@@ -22,5 +22,3 @@ func (repo *FacultiesRepository) SelectFaculties(ctx context.Context) ([]stored.
 	err := repo.db.SelectContext(ctx, &result, query)
 	return result, err
 }
-
-

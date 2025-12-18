@@ -1,4 +1,4 @@
-package repository
+package postgres
 
 import (
 	"context"
@@ -23,4 +23,3 @@ func (repo *OmmissionsRepository) GetStudentOmissions(ctx context.Context, stude
 	err := repo.db.SelectContext(ctx, &result, query, studentId)
 	return result, err
 }
-

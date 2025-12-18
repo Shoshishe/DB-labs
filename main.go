@@ -18,15 +18,18 @@ const (
 )
 
 func main() {
-	db := ioc.UsePgConnection()
-	defer db.Close()
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	err := godotenv.Load()
 	if err != nil {
 		slog.Error(fmt.Sprintf("Error loading .env file: %v", err))
 	}
+
+	db := ioc.UsePgConnection()
+	defer db.Close()
+	valkey := ioc.UseValkeyConnection()
+	defer valkey.Close()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	ongoingCtx, stopOngoing := context.WithCancel(context.Background())
 
