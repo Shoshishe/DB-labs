@@ -35,6 +35,12 @@ func main() {
 
 	server := ioc.UseHttpServer(ongoingCtx)
 
+	ioc.SetupControllers([]ioc.Controller{
+		ioc.UseAuthController(),
+		ioc.UseUniversitiesController(), ioc.UseUsersController(),
+		ioc.UseGroupsController(),
+	})
+
 	<-ctx.Done()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), ShutdownPeriod)

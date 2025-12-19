@@ -38,6 +38,7 @@ var UsePgConnection = provider(
 			os.Exit(1)
 		}
 		err = db.Ping()
+		db.SetMaxOpenConns(10)
 		if err != nil {
 			slog.Error(fmt.Errorf("Failed to connect to postgres database with given config: %w", err).Error())
 			os.Exit(1)
@@ -47,8 +48,8 @@ var UsePgConnection = provider(
 )
 
 var UseUniversitiesRepo = provider(
-	func() repository.UniversitiesRepository {
-		return *repository.NewUniversitiesRepository(UsePgConnection())
+	func() *repository.UniversitiesRepository {
+		return repository.NewUniversitiesRepository(UsePgConnection())
 	},
 )
 
@@ -65,7 +66,13 @@ var useLessonsRepo = provider(
 )
 
 var useUsersRepo = provider(
-	func() repository.UserRepository {
-		return *repository.NewUserRepository(UsePgConnection())
+	func() *repository.UserRepository {
+		return repository.NewUserRepository(UsePgConnection())
+	},
+)
+
+var useGroupsRepo = provider(
+	func() *repository.GroupsRepository {
+		return repository.NewGroupsRepository(UsePgConnection())
 	},
 )

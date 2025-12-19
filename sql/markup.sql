@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS universities (
 	shorthand text NOT NULL,
 	
 	CONSTRAINT universities_full_name_ck CHECK(LENGTH(full_name) < 100),
-	CONSTRAINT universities_shorthand_ck CHECK(LENGTH(shorthand) < 10),
+	CONSTRAINT universities_shorthand_ck CHECK(LENGTH(shorthand) < 10),'og'
 	CONSTRAINT pk_universities PRIMARY KEY (id),
 	CONSTRAINT universities_name_uq UNIQUE (full_name)
 );
@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS users (
 	CONSTRAINT users_patronymic_ck CHECK(LENGTH(patronymic) < 50),
 	CONSTRAINT pk_users PRIMARY KEY (id)
 );
+
+
+
 
 CREATE TABLE IF NOT EXISTS roles (
 	id smallint NOT NULL GENERATED ALWAYS AS IDENTITY,

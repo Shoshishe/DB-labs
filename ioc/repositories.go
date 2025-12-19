@@ -6,6 +6,7 @@ import (
 
 var useAuthRepo = provider(
 	func() *repository.AuthRepistory {
-		return repository.NewAuthRepository(*useTokenStore(), useUsersRepo())
+		return repository.NewAuthRepository(*useTokenStore(), *useUsersRepo())
 	},
 )
+

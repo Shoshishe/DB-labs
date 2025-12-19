@@ -20,6 +20,27 @@ func RolesFromId(ids []int8) []UserRole {
 	return roles
 }
 
+func (role UserRole) String() string {
+	switch role {
+	case Student:
+		return "Student"
+	case Teacher:
+		return "Teacher"
+	case Monitor:
+		return "Monitor"
+	default:
+		return ""
+	}
+}
+
+func (usr *User) RoleNames() []string {
+	res := []string{}
+	for _, role := range usr.Roles() {
+		res = append(res, role.String())
+	}
+	return res
+}
+
 type User struct {
 	id           uuid.UUID
 	universityId uuid.UUID
@@ -39,6 +60,8 @@ func NewUser(id, universityId uuid.UUID, roles []UserRole, name, surname, patron
 		surname:      surname,
 		patronymic:   patronymic,
 		password:     password,
+		email:        email,
+		roles:        roles,
 	}
 }
 
@@ -71,5 +94,5 @@ func (usr *User) Surname() string {
 }
 
 func (usr *User) Password() string {
-	return usr.Password()
+	return usr.password
 }
