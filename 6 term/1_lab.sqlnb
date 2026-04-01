@@ -1,0 +1,178 @@
+cells:
+  - kind: 2
+    value: CREATE TABLE MyTable(id number, val number);
+    languageId: oracle-sql
+  - kind: 2
+    value: >-
+      DECLARE
+
+      total integer;
+
+      odd integer;
+
+      begin
+         for i in 1..10000 loop
+            insert into mytable (
+               id, val
+          ) values (
+               trunc(dbms_random.value(1,102302)),
+               trunc(dbms_random.value(1,934253))
+            );
+         end loop;
+         select count(*) into total from mytable;
+         select count(*) into odd from mytable where mod(val, 2) = 1;
+
+         if (total - odd > odd) THEN
+          for j in 1..total-odd-odd loop 
+           insert into mytable (id, val) values (trunc(dbms_random.value(1,93312456)),5);
+          end loop;
+         else
+          for j in 1..total-odd loop 
+           insert into mytable (id, val) values (trunc(dbms_random.value(1,93312456)),4);
+          end loop;
+         end if;
+      end;
+    languageId: oracle-sql
+  - kind: 2
+    value: |-
+      select count(*) from MYTABLE where mod(val,2)=0;
+      /
+      select count(*) from mytable where mod(val,2)=1;
+    languageId: oracle-sql
+  - kind: 2
+    value: |2-
+         SET SERVEROUTPUT ON;
+
+      declare
+         result boolean;
+         function more_odd return boolean is
+            odd_count  integer;
+            even_count integer;
+         begin
+            select count(*)
+              into even_count
+              from mytable
+             where mod(
+               val,
+               2
+            ) = 0;
+            select count(*)
+              into odd_count
+              from mytable
+             where mod(
+               val,
+               2
+            ) = 0;
+            return even_count > odd_count;
+         end more_odd;
+
+      begin
+         result := more_odd();
+         if result then
+            dbms_output.put_line('TRUE');
+         else
+            dbms_output.put_line('FALSE');
+         end if;
+      end;
+    languageId: oracle-sql
+  - kind: 2
+    value: >2-
+         SET SERVEROUTPUT on;
+      declare
+         function insert_by_id return varchar is
+            row_id mytable.id%type := '&row_id';
+            v_id   number;
+            v_val  number;
+            result varchar(256);
+         begin
+            select id,
+                   val
+              into
+               v_id,
+               v_val
+              from mytable
+             where id = row_id;
+            return 'INSERT INTO MYTABLE (id, val) VALUES ('
+                   || v_id
+                   || ','
+                   || v_val
+                   || ');';
+         exception
+            when no_data_found then
+               dbms_output.put_line('No such row to make a select statement from');
+            when others then
+               dbms_output.put_line('Unexpected error: ' || sqlerrm);
+         end insert_by_id;
+      begin
+         dbms_output.put_line(insert_by_id());
+      end;
+    languageId: oracle-sql
+  - kind: 2
+    value: |-
+      declare
+         procedure insert_into_table (
+            v_id  number,
+            v_val number
+         ) is
+         begin
+            insert into mytable (
+               id,
+               val
+            ) values ( v_id,
+                       v_val );
+         end insert_into_table;
+
+         procedure update_table (
+            v_id  number,
+            v_val number
+         ) is
+         begin
+            update mytable
+               set
+               val = v_val
+             where id = v_id;
+         end;
+
+         procedure delete_from_table (
+            v_id number
+         ) is
+         begin
+            delete from mytable
+             where id = v_id;
+         end;
+
+      begin
+         insert_into_table(
+            6,
+            10
+         );
+      end;
+    languageId: oracle-sql
+  - kind: 2
+    value: >2-
+         SET SERVEROUTPUT on;
+      declare
+         input int;
+         bonus number;
+         function calc_bonus (
+            val     number,
+            percent number
+         ) return number is
+         begin
+            return ( 1 + percent ) * 12 * val;
+         end calc_bonus;
+
+      begin
+         input := &user_input_val;
+         if input > 100 then
+            RAISE_APPLICATION_ERROR(-20000,'INCORRECT PERCENTAGE VALUE, MORE THAN 100 IS NOT ALLOWED');
+         elsif input < 0 then
+            RAISE_APPLICATION_ERROR(-20000,'INCORRECT PERCENTAGE VALUE, LESS THAN 0 IS NOT ALLOWED');
+         end if;
+         bonus := (calc_bonus(
+            cast(1000 as number),
+            input/100
+         ));
+         dbms_output.PUT_LINE(bonus);
+      end;
+    languageId: oracle-sql

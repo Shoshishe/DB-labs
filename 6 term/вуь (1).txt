@@ -1,0 +1,1174 @@
+SELECT * FROM user_tables;
+SELECT * FROM all_tables;
+SELECT * FROM user_tab_columns;
+SELECT * FROM all_tab_columns;
+SELECT * FROM user_constraints;
+SELECT * FROM all_constraints;
+
+-- таблицы, колонки, ограничения
+
+CREATE OR REPLACE TYPE t_constraint_info AS OBJECT (
+    reason VARCHAR2(4000),
+    table_name VARCHAR2(1280),
+    constraint_type VARCHAR2(1000),
+    column_name VARCHAR2(4000),
+    nullable varchar2(40),
+    data_type varchar(100),
+    search_condition_vc VARCHAR2(4000),
+    delete_rule VARCHAR2(9000),
+    position NUMBER,
+    parent_constraint_type VARCHAR2(1000),
+    parent_table_name VARCHAR2(1280),
+    parent_column_name VARCHAR2(4000),
+    parent_search_condition_vc VARCHAR2(4000),
+    parent_delete_rule VARCHAR2(9000),
+    parent_position NUMBER
+);
+
+DROP TYPE t_constraint_info_table;
+CREATE OR REPLACE TYPE t_constraint_info_table AS TABLE OF t_constraint_info;
+
+-- собирает в одну таблицу:
+-- 1. данные о таблицах, которых нет в prod, но есть в dev - нет проверки таблиц, которые есть в prod, но нет в dev
+-- 2. данные о колонках, структура которых не совпадает в схемах
+-- 3. данные об ограничениях, логическая структура которых различается (имя ограничения в структуру не входит и не выводится)
+CREATE OR REPLACE FUNCTION analyze_schema(p_dev_name IN varchar2, p_prod_name IN varchar2)
+RETURN t_constraint_info_table
+IS
+	v_result_tables t_constraint_info_table;
+	v_result_columns t_constraint_info_table;
+	v_result_constraints t_constraint_info_table;
+	v_result_merge t_constraint_info_table;
+BEGIN
+SELECT t_constraint_info(
+               'TABLE_MISSING_IN_PROD',
+               table_name, 
+               NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+           )
+    BULK COLLECT INTO v_result_tables
+    FROM (
+        SELECT table_name FROM all_tables WHERE owner = UPPER(p_dev_name)
+        MINUS
+        SELECT table_name FROM all_tables WHERE owner = UPPER(p_prod_name)
+    );
+SELECT t_constraint_info
+(reason, 
+table_name, 
+NULL,
+column_name, 
+nullable,
+data_type, 
+NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+BULK COLLECT INTO v_result_columns
+FROM ((
+		SELECT 'COLUMN_MISSING_IN_PROD' AS reason, table_name, column_name, data_type, nullable 
+		FROM all_tab_columns
+		WHERE owner = upper(p_dev_name)
+	MINUS
+		SELECT 'COLUMN_MISSING_IN_PROD' AS reason, table_name, column_name, data_type, nullable
+		FROM all_tab_columns
+	WHERE owner = upper(p_prod_name))
+	UNION ALL
+	(
+		SELECT 'COLUMN_MISSING_IN_DEV' AS reason, table_name, column_name, data_type, nullable
+		FROM all_tab_columns
+		WHERE owner = upper(p_prod_name)
+	MINUS
+		SELECT 'COLUMN_MISSING_IN_DEV' AS reason, table_name, column_name, data_type, nullable
+		FROM all_tab_columns
+		WHERE owner = upper(p_dev_name)
+	)
+);
+SELECT t_constraint_info
+(reason,
+table_name,
+constraint_type,
+column_name,
+NULL,
+NULL,
+search_condition_vc,
+delete_rule,
+"position",
+parent_constraint_type,
+parent_table_name,
+parent_column_name,
+parent_search_condition_vc,
+parent_delete_rule,
+parent_position
+)
+BULK COLLECT INTO v_result_constraints
+FROM ((
+		SELECT 'CONSTRAINT_MISSING_IN_DEV' AS reason, ac.constraint_type AS constraint_type, ac.table_name AS table_name, acc.column_name AS column_name, ac.search_condition_vc AS search_condition_vc, ac.delete_rule AS delete_rule, acc.POSITION AS "position", p_ac.constraint_type AS parent_constraint_type, p_ac.table_name AS parent_table_name, p_acc.column_name AS parent_column_name, p_ac.search_condition_vc AS parent_search_condition_vc, p_ac.delete_rule AS parent_delete_rule, p_acc.position AS parent_position
+		FROM all_constraints ac
+		LEFT join all_cons_columns acc 
+			ON (ac.owner=acc.owner AND ac.constraint_name=acc.constraint_name)
+		LEFT JOIN all_constraints p_ac 
+			ON (ac.owner=p_ac.owner AND ac.r_constraint_name=p_ac.constraint_name)
+		LEFT JOIN all_cons_columns p_acc 
+			ON (p_ac.owner=p_acc.owner AND p_ac.constraint_name=p_acc.constraint_name AND acc.position = p_acc.position)
+		WHERE ac.owner = upper(p_prod_name)
+	MINUS
+		SELECT 'CONSTRAINT_MISSING_IN_DEV' AS reason, ac.constraint_type AS constraint_type, ac.table_name AS table_name, acc.column_name AS column_name, ac.search_condition_vc AS search_condition_vc, ac.delete_rule AS delete_rule, acc.POSITION AS "position", p_ac.constraint_type AS parent_constraint_type, p_ac.table_name AS parent_table_name, p_acc.column_name AS parent_column_name, p_ac.search_condition_vc AS parent_search_condition_vc, p_ac.delete_rule AS parent_delete_rule, p_acc.position AS parent_position
+		FROM all_constraints ac
+		LEFT join all_cons_columns acc 
+			ON (ac.owner=acc.owner AND ac.constraint_name=acc.constraint_name)
+		LEFT JOIN all_constraints p_ac 
+			ON (ac.owner=p_ac.owner AND ac.r_constraint_name=p_ac.constraint_name)
+		LEFT JOIN all_cons_columns p_acc 
+			ON(p_ac.owner=p_acc.owner AND p_ac.constraint_name=p_acc.constraint_name AND acc.position = p_acc.position)
+		WHERE ac.owner = upper(p_dev_name)
+		)
+	UNION ALL
+	(
+		SELECT 'CONSTRAINT_MISSING_IN_PROD' AS reason, ac.constraint_type AS constraint_type, ac.table_name AS table_name, acc.column_name AS column_name, ac.search_condition_vc AS search_condition_vc, ac.delete_rule AS delete_rule, acc.POSITION AS "position", p_ac.constraint_type AS parent_constraint_type, p_ac.table_name AS parent_table_name, p_acc.column_name AS parent_column_name, p_ac.search_condition_vc AS parent_search_condition_vc, p_ac.delete_rule AS parent_delete_rule, p_acc.position AS parent_position
+		FROM all_constraints ac
+		LEFT join all_cons_columns acc 
+			ON (ac.owner=acc.owner AND ac.constraint_name=acc.constraint_name)
+		LEFT JOIN all_constraints p_ac 
+			ON (ac.owner=p_ac.owner AND ac.r_constraint_name=p_ac.constraint_name)
+		LEFT JOIN all_cons_columns p_acc 
+			ON(p_ac.owner=p_acc.owner AND p_ac.constraint_name=p_acc.constraint_name AND acc.position = p_acc.position)
+		WHERE ac.owner = upper(p_dev_name)
+	MINUS
+		SELECT 'CONSTRAINT_MISSING_IN_PROD' AS reason, ac.constraint_type AS constraint_type, ac.table_name AS table_name, acc.column_name AS column_name, ac.search_condition_vc AS search_condition_vc, ac.delete_rule AS delete_rule, acc.POSITION AS "position", p_ac.constraint_type AS parent_constraint_type, p_ac.table_name AS parent_table_name, p_acc.column_name AS parent_column_name, p_ac.search_condition_vc AS parent_search_condition_vc, p_ac.delete_rule AS parent_delete_rule, p_acc.position AS parent_position
+		FROM all_constraints ac
+		LEFT join all_cons_columns acc 
+			ON (ac.owner=acc.owner AND ac.constraint_name=acc.constraint_name)
+		LEFT JOIN all_constraints p_ac 
+			ON (ac.owner=p_ac.owner AND ac.r_constraint_name=p_ac.constraint_name)
+		LEFT JOIN all_cons_columns p_acc 
+			ON(p_ac.owner=p_acc.owner AND p_ac.constraint_name=p_acc.constraint_name AND acc.position = p_acc.position)
+		WHERE ac.owner = upper(p_prod_name)
+	)
+);
+v_result_merge := v_result_tables MULTISET UNION ALL v_result_columns MULTISET UNION ALL v_result_constraints;
+RETURN v_result_merge;
+END;
+
+SELECT * FROM user_errors WHERE name = 'ANALYZE_SCHEMA';
+SELECT * FROM analyze_schema(:p_dev_name, :p_prod_name);
+
+CREATE OR REPLACE TYPE t_sort_item AS OBJECT (
+    table_name VARCHAR2(128),
+    lvl        NUMBER
+);
+CREATE OR REPLACE TYPE t_sort_table AS TABLE OF t_sort_item;
+
+-- сортирует данные о расхождениях двух схем в порядке возможного создания
+CREATE OR REPLACE FUNCTION sort_analyze(p_dev_name IN varchar2, p_prod_name IN varchar2)
+RETURN t_sort_table
+IS
+v_data t_constraint_info_table;
+v_result t_sort_table;
+BEGIN
+	v_data := analyze_schema(p_dev_name, p_prod_name);
+	WITH r(name, parent_name, lvl) AS
+	(
+		SELECT table_name AS name, parent_table_name AS parent_name, 1 AS lvl
+		FROM TABLE(v_data)
+		WHERE parent_table_name IS null
+		UNION ALL
+		SELECT v.table_name AS name, v.parent_table_name AS parent_name, r.lvl + 1 AS lvl
+		FROM TABLE(v_data) v
+		JOIN r ON r.name = v.parent_table_name
+	)
+	SELECT t_sort_item(name, MAX(lvl))
+	BULK COLLECT INTO v_result
+	FROM r
+	GROUP BY name
+	ORDER BY max(lvl);
+	RETURN v_result;
+EXCEPTION
+WHEN OTHERS THEN
+	DBMS_OUTPUT.PUT_LINE('Error: Обнаружен цикл в рекурсивном CTE (ORA-32044)');
+	RETURN NULL;
+END;
+
+SELECT * FROM user_errors WHERE name = 'SORT_ANALYZE';
+
+SELECT table_name FROM sort_analyze(:p_dev_name, :p_prod_name);
+
+-- собирает в одну таблицу:
+-- 1. данные о таблицах, которых нет в prod, но есть в dev или те, которые есть в prod, но нет в dev
+-- 2. данные о колонках, структура которых не совпадает в схемах (nullable не учитывается, т.к. исправляется при анализе ограничений)
+-- 3. данные об ограничениях, логическая структура которых различается (имя ограничения в структуру не входит и не выводится)
+-- в этой версии атрибут nullable для колонок не учитывается, так как обрабатывается при анализе ограничений
+CREATE OR REPLACE FUNCTION analyze_schema(p_dev_name IN varchar2, p_prod_name IN varchar2)
+RETURN t_constraint_info_table
+IS
+	v_result_tables t_constraint_info_table;
+	v_result_columns t_constraint_info_table;
+	v_result_constraints t_constraint_info_table;
+	v_result_merge t_constraint_info_table;
+BEGIN
+SELECT t_constraint_info(
+               reason,
+               table_name, 
+               NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+           )
+    BULK COLLECT INTO v_result_tables
+    FROM (
+        (
+        SELECT 'TABLE_MISSING_IN_PROD' AS reason, table_name FROM all_tables WHERE owner = UPPER(p_dev_name)
+        MINUS
+        SELECT 'TABLE_MISSING_IN_PROD' AS reason, table_name FROM all_tables WHERE owner = UPPER(p_prod_name)
+        )
+        UNION ALL
+        (
+        SELECT 'TABLE_MISSING_IN_DEV' AS reason, table_name FROM all_tables WHERE owner = UPPER(p_prod_name)
+        MINUS
+        SELECT 'TABLE_MISSING_IN_DEV' AS reason, table_name FROM all_tables WHERE owner = UPPER(p_dev_name)
+        )
+    );
+SELECT t_constraint_info
+(reason, 
+table_name, 
+NULL,
+column_name, 
+'',
+data_type, 
+NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+BULK COLLECT INTO v_result_columns
+FROM ((
+		SELECT 'COLUMN_MISSING_IN_PROD' AS reason, table_name, column_name, data_type, '' 
+		FROM all_tab_columns
+		WHERE owner = upper(p_dev_name)
+	MINUS
+		SELECT 'COLUMN_MISSING_IN_PROD' AS reason, table_name, column_name, data_type, ''
+		FROM all_tab_columns
+	WHERE owner = upper(p_prod_name))
+	UNION ALL
+	(
+		SELECT 'COLUMN_MISSING_IN_DEV' AS reason, table_name, column_name, data_type, ''
+		FROM all_tab_columns
+		WHERE owner = upper(p_prod_name)
+	MINUS
+		SELECT 'COLUMN_MISSING_IN_DEV' AS reason, table_name, column_name, data_type, ''
+		FROM all_tab_columns
+		WHERE owner = upper(p_dev_name)
+	)
+);
+SELECT t_constraint_info
+(reason,
+table_name,
+constraint_type,
+column_name,
+NULL,
+NULL,
+search_condition_vc,
+delete_rule,
+"position",
+parent_constraint_type,
+parent_table_name,
+parent_column_name,
+parent_search_condition_vc,
+parent_delete_rule,
+parent_position
+)
+BULK COLLECT INTO v_result_constraints
+FROM ((
+		SELECT 'CONSTRAINT_MISSING_IN_DEV' AS reason, ac.constraint_type AS constraint_type, ac.table_name AS table_name, acc.column_name AS column_name, ac.search_condition_vc AS search_condition_vc, ac.delete_rule AS delete_rule, acc.POSITION AS "position", p_ac.constraint_type AS parent_constraint_type, p_ac.table_name AS parent_table_name, p_acc.column_name AS parent_column_name, p_ac.search_condition_vc AS parent_search_condition_vc, p_ac.delete_rule AS parent_delete_rule, p_acc.position AS parent_position
+		FROM all_constraints ac
+		LEFT join all_cons_columns acc 
+			ON (ac.owner=acc.owner AND ac.constraint_name=acc.constraint_name)
+		LEFT JOIN all_constraints p_ac 
+			ON (ac.owner=p_ac.owner AND ac.r_constraint_name=p_ac.constraint_name)
+		LEFT JOIN all_cons_columns p_acc 
+			ON (p_ac.owner=p_acc.owner AND p_ac.constraint_name=p_acc.constraint_name AND acc.position = p_acc.position)
+		WHERE ac.owner = upper(p_prod_name)
+	MINUS
+		SELECT 'CONSTRAINT_MISSING_IN_DEV' AS reason, ac.constraint_type AS constraint_type, ac.table_name AS table_name, acc.column_name AS column_name, ac.search_condition_vc AS search_condition_vc, ac.delete_rule AS delete_rule, acc.POSITION AS "position", p_ac.constraint_type AS parent_constraint_type, p_ac.table_name AS parent_table_name, p_acc.column_name AS parent_column_name, p_ac.search_condition_vc AS parent_search_condition_vc, p_ac.delete_rule AS parent_delete_rule, p_acc.position AS parent_position
+		FROM all_constraints ac
+		LEFT join all_cons_columns acc 
+			ON (ac.owner=acc.owner AND ac.constraint_name=acc.constraint_name)
+		LEFT JOIN all_constraints p_ac 
+			ON (ac.owner=p_ac.owner AND ac.r_constraint_name=p_ac.constraint_name)
+		LEFT JOIN all_cons_columns p_acc 
+			ON(p_ac.owner=p_acc.owner AND p_ac.constraint_name=p_acc.constraint_name AND acc.position = p_acc.position)
+		WHERE ac.owner = upper(p_dev_name)
+		)
+	UNION ALL
+	(
+		SELECT 'CONSTRAINT_MISSING_IN_PROD' AS reason, ac.constraint_type AS constraint_type, ac.table_name AS table_name, acc.column_name AS column_name, ac.search_condition_vc AS search_condition_vc, ac.delete_rule AS delete_rule, acc.POSITION AS "position", p_ac.constraint_type AS parent_constraint_type, p_ac.table_name AS parent_table_name, p_acc.column_name AS parent_column_name, p_ac.search_condition_vc AS parent_search_condition_vc, p_ac.delete_rule AS parent_delete_rule, p_acc.position AS parent_position
+		FROM all_constraints ac
+		LEFT join all_cons_columns acc 
+			ON (ac.owner=acc.owner AND ac.constraint_name=acc.constraint_name)
+		LEFT JOIN all_constraints p_ac 
+			ON (ac.owner=p_ac.owner AND ac.r_constraint_name=p_ac.constraint_name)
+		LEFT JOIN all_cons_columns p_acc 
+			ON(p_ac.owner=p_acc.owner AND p_ac.constraint_name=p_acc.constraint_name AND acc.position = p_acc.position)
+		WHERE ac.owner = upper(p_dev_name)
+	MINUS
+		SELECT 'CONSTRAINT_MISSING_IN_PROD' AS reason, ac.constraint_type AS constraint_type, ac.table_name AS table_name, acc.column_name AS column_name, ac.search_condition_vc AS search_condition_vc, ac.delete_rule AS delete_rule, acc.POSITION AS "position", p_ac.constraint_type AS parent_constraint_type, p_ac.table_name AS parent_table_name, p_acc.column_name AS parent_column_name, p_ac.search_condition_vc AS parent_search_condition_vc, p_ac.delete_rule AS parent_delete_rule, p_acc.position AS parent_position
+		FROM all_constraints ac
+		LEFT join all_cons_columns acc 
+			ON (ac.owner=acc.owner AND ac.constraint_name=acc.constraint_name)
+		LEFT JOIN all_constraints p_ac 
+			ON (ac.owner=p_ac.owner AND ac.r_constraint_name=p_ac.constraint_name)
+		LEFT JOIN all_cons_columns p_acc 
+			ON(p_ac.owner=p_acc.owner AND p_ac.constraint_name=p_acc.constraint_name AND acc.position = p_acc.position)
+		WHERE ac.owner = upper(p_prod_name)
+	)
+);
+v_result_merge := v_result_tables MULTISET UNION ALL v_result_columns MULTISET UNION ALL v_result_constraints;
+RETURN v_result_merge;
+END;
+
+SELECT * FROM user_errors WHERE name = 'ANALYZE_SCHEMA';
+SELECT * FROM analyze_schema(:p_dev_name, :p_prod_name);
+
+SELECT reason, table_name FROM analyze_schema(:p_dev_name, :p_prod_name)
+WHERE reason LIKE 'TABLE_MISSING%';
+
+SELECT reason, table_name, column_name, data_type FROM analyze_schema(:p_dev_name, :p_prod_name)
+where reason LIKE 'COLUMN_MISSING%';
+
+SELECT constraint_type, table_name, search_condition_vc, delete_rule FROM analyze_schema(:p_dev_name, :p_prod_name) a
+WHERE reason = 'CONSTRAINT_MISSING_IN_DEV'
+
+
+SELECT constraint_type, table_name, search_condition_vc, delete_rule FROM all_constraints ac
+WHERE ac.owner = 'PROD'
+
+
+SELECT
+    a.reason,
+    a.table_name,
+    a.constraint_type,
+    a.column_name,
+    a.position,
+    a.search_condition_vc,
+    a.delete_rule,
+    a.parent_table_name,
+    a.parent_column_name,
+    a.parent_position,
+    ac.owner AS constraint_owner,
+    ac.constraint_name
+FROM analyze_schema(:p_dev_name, :p_prod_name) a
+inner join all_constraints ac 
+ON ac.constraint_type = a.constraint_type
+and ac.table_name = a.table_name
+AND NVL(ac.search_condition_vc, '#NULL#') = NVL(a.search_condition_vc, '#NULL#')
+AND NVL(ac.delete_rule, '#NULL#') = NVL(a.delete_rule, '#NULL#')
+LEFT join all_cons_columns acc 
+	ON (ac.owner=acc.owner AND ac.constraint_name=acc.constraint_name)
+LEFT JOIN all_constraints p_ac 
+	ON (ac.owner=p_ac.owner AND ac.r_constraint_name=p_ac.constraint_name)
+LEFT JOIN all_cons_columns p_acc 
+	ON(p_ac.owner=p_acc.owner AND p_ac.constraint_name=p_acc.constraint_name AND acc.position = p_acc.position)
+WHERE ac.owner = 'DEV' AND a.reason = 'CONSTRAINT_MISSING_IN_PROD'
+AND acc.column_name = a.column_name
+AND (acc.POSITION = a.POSITION OR (acc.POSITION IS NULL AND a.POSITION IS null))
+AND (p_ac.constraint_type = a.parent_constraint_type OR (p_ac.constraint_type IS NULL and a.parent_constraint_type is NULL))
+AND (p_ac.table_name = a.parent_table_name OR (p_ac.table_name IS NULL AND  a.parent_table_name IS null))
+AND (p_acc.column_name = a.parent_column_name OR (p_acc.column_name IS NULL AND  a.parent_column_name IS null))
+AND (p_ac.search_condition_vc = a.parent_search_condition_vc OR (p_ac.search_condition_vc IS NULL AND a.parent_search_condition_vc IS NULL))
+AND (p_ac.delete_rule = a.parent_delete_rule OR (p_ac.delete_rule is NULL OR a.parent_delete_rule IS NULL))
+AND (p_acc.POSITION = a.parent_position OR (p_acc.POSITION IS NULL AND a.parent_position IS NULL))
+;
+
+
+SELECT
+    a.reason,
+    a.table_name,
+    a.constraint_type,
+    a.column_name,
+    a.position,
+    a.search_condition_vc,
+    a.delete_rule,
+    a.parent_table_name,
+    a.parent_column_name,
+    a.parent_position,
+    ac.owner AS constraint_owner,
+    ac.constraint_name
+FROM analyze_schema(:p_dev_name, :p_prod_name) a
+inner join all_constraints ac 
+ON ac.constraint_type = a.constraint_type
+and ac.table_name = a.table_name
+AND NVL(ac.search_condition_vc, '#NULL#') = NVL(a.search_condition_vc, '#NULL#')
+AND NVL(ac.delete_rule, '#NULL#') = NVL(a.delete_rule, '#NULL#')
+LEFT join all_cons_columns acc 
+	ON (ac.owner=acc.owner AND ac.constraint_name=acc.constraint_name)
+LEFT JOIN all_constraints p_ac 
+	ON (ac.owner=p_ac.owner AND ac.r_constraint_name=p_ac.constraint_name)
+LEFT JOIN all_cons_columns p_acc 
+	ON(p_ac.owner=p_acc.owner AND p_ac.constraint_name=p_acc.constraint_name AND acc.position = p_acc.position)
+WHERE ac.owner = 'PROD`' AND a.reason = 'CONSTRAINT_MISSING_IN_DEV'
+AND acc.column_name = a.column_name
+AND (acc.POSITION = a.POSITION OR (acc.POSITION IS NULL AND a.POSITION IS null))
+AND (p_ac.constraint_type = a.parent_constraint_type OR (p_ac.constraint_type IS NULL and a.parent_constraint_type is NULL))
+AND (p_ac.table_name = a.parent_table_name OR (p_ac.table_name IS NULL AND  a.parent_table_name IS null))
+AND (p_acc.column_name = a.parent_column_name OR (p_acc.column_name IS NULL AND  a.parent_column_name IS null))
+AND (p_ac.search_condition_vc = a.parent_search_condition_vc OR (p_ac.search_condition_vc IS NULL AND a.parent_search_condition_vc IS NULL))
+AND (p_ac.delete_rule = a.parent_delete_rule OR (p_ac.delete_rule is NULL OR a.parent_delete_rule IS NULL))
+AND (p_acc.POSITION = a.parent_position OR (p_acc.POSITION IS NULL AND a.parent_position IS NULL))
+;
+
+-- процедуры, функции, пакеты
+DROP TYPE t_sort_source_items;
+DROP TYPE t_source_item;
+CREATE OR REPLACE TYPE t_source_item AS OBJECT (
+	insert_order number,
+	delete_order number,
+	original_schema varchar2(128),
+	original_name varchar2(128),
+	original_type varchar2(128),
+	compared_name varchar2(128),
+	compared_type varchar2(128)
+);
+
+CREATE OR REPLACE TYPE t_sort_source_items AS TABLE OF t_source_item;
+
+SELECT * FROM all_source
+WHERE owner = 'DEV'
+ORDER BY 3, 2, 4;
+
+SELECT * FROM all_source
+WHERE owner = 'TEST_PROD'
+ORDER BY 3, 2, 4;
+
+
+CREATE OR REPLACE FUNCTION analyze_types(p_dev_name IN varchar2, p_prod_name IN varchar2)
+RETURN t_sort_source_items
+IS
+	dev_diff t_sort_source_items;
+	prod_diff t_sort_source_items;
+	merge_diff t_sort_source_items;
+BEGIN
+	SELECT t_source_item(
+	insert_order,
+	NULL, 
+	original_schema,
+	original_name, 
+	original_type,
+	compared_name, 
+	compared_type)
+	BULK COLLECT INTO dev_diff
+	FROM (
+		SELECT DISTINCT 
+		CASE dev.TYPE
+			WHEN 'FUNCTION' THEN 1
+			WHEN 'PROCEDURE' THEN 2
+			WHEN 'PACKAGE' THEN 3
+			WHEN 'PACKAGE BODY' THEN 4
+		END AS insert_order,
+		dev.owner AS original_schema, dev.name AS original_name, dev.TYPE AS original_type, prod.name AS compared_name, prod.TYPE AS compared_type
+		FROM all_source dev
+		FULL JOIN all_source prod
+			ON dev.name = prod.name AND dev.TYPE = prod.TYPE AND dev.line = prod.line
+			AND (prod.owner = upper(p_prod_name)) AND prod.owner <> dev.owner
+		WHERE dev.owner = upper(p_dev_name) AND (dev.text <> prod.text OR prod.text IS NULL)
+		AND dev.TYPE in ('PACKAGE BODY', 'PACKAGE', 'PROCEDURE', 'FUNCTION')
+		ORDER BY 1, 3, 2
+	);
+	SELECT t_source_item(
+	NULL, 
+	delete_order, 
+	original_schema,
+	original_name, 
+	original_type,
+	compared_name, 
+	compared_type)
+	BULK COLLECT INTO prod_diff
+	FROM (
+		SELECT DISTINCT
+		CASE prod.type 
+			WHEN 'PACKAGE BODY' THEN 1
+			WHEN 'PACKAGE' THEN 2
+			WHEN 'PROCEDURE' THEN 3
+			WHEN 'FUNCTION' THEN 4
+		END AS delete_order,
+		prod.owner AS original_schema, prod.name AS original_name, prod.TYPE AS original_type, dev.name AS compared_name, dev.TYPE AS compared_type
+		FROM all_source prod
+		FULL JOIN all_source dev
+			ON dev.name = prod.name AND dev.TYPE = prod.TYPE AND dev.line = prod.line
+			AND (dev.owner = upper(p_dev_name)) AND prod.owner <> dev.owner
+		WHERE prod.owner = upper(p_prod_name) AND (prod.text <> dev.text OR dev.text IS NULL)
+		AND prod.TYPE in ('PACKAGE BODY', 'PACKAGE', 'PROCEDURE', 'FUNCTION')
+		ORDER BY 1, 3, 2
+	);
+	merge_diff := dev_diff MULTISET UNION ALL prod_diff;
+	RETURN merge_diff;
+END;
+/
+
+SELECT * FROM user_errors WHERE name = upper('analyze_types');
+SELECT * FROM analyze_types(:p_dev_name, :p_prod_name);	
+
+-- анализ индексов
+
+CREATE OR REPLACE TYPE t_index_diff AS OBJECT (
+    reason VARCHAR2(4000),
+    index_name VARCHAR2(128),
+    table_name VARCHAR2(128),
+    uniqueness VARCHAR2(10),
+    column_definition VARCHAR2(4000),
+    column_position NUMBER
+);
+
+
+CREATE OR REPLACE TYPE t_index_diff_table AS TABLE OF t_index_diff;
+
+-- функция для анализ индексов
+CREATE OR REPLACE FUNCTION analyze_indexes_filtered(
+    p_dev_name IN VARCHAR2,
+    p_prod_name IN VARCHAR2
+) RETURN t_index_diff_table
+IS
+    v_result t_index_diff_table;
+BEGIN
+    WITH raw_data AS (
+        SELECT
+            i.owner,
+            i.index_name,
+            i.table_name,
+            i.uniqueness,
+            c.column_name AS simple_col_name,
+            c.column_position,
+            e.index_name AS has_expr
+        FROM all_indexes i
+        JOIN all_ind_columns c
+            ON i.index_name = c.index_name AND i.owner = c.index_owner
+        LEFT JOIN all_ind_expressions e 
+            ON c.index_name = e.index_name 
+            AND c.index_owner = e.index_owner
+            AND c.column_position = e.column_position
+        WHERE i.owner IN (UPPER(p_dev_name), UPPER(p_prod_name))
+    ),
+    xml_prepare AS (
+        SELECT 
+            r.*,
+            CASE 
+                WHEN has_expr IS NOT NULL THEN
+                    dbms_xmlgen.getxml(
+                        'SELECT column_expression FROM all_ind_expressions ' ||
+                        'WHERE index_owner = ''' || owner || ''' ' ||
+                        'AND index_name = ''' || index_name || ''' ' ||
+                        'AND column_position = ' || column_position
+                    )
+                ELSE NULL 
+            END as xml_clob
+        FROM raw_data r
+    ),
+    final_view AS (
+        SELECT 
+            owner,
+            index_name,
+            table_name,
+            uniqueness,
+            column_position,
+            CASE 
+                WHEN xml_clob IS NOT NULL THEN 
+                    CAST(extractValue(xmltype(xml_clob), '//text()') AS VARCHAR2(4000))
+                ELSE simple_col_name 
+            END as column_definition
+        FROM xml_prepare
+    ),
+    all_diffs AS (
+        (SELECT 'INDEX_MISSING_IN_PROD' AS reason, index_name, table_name, uniqueness, column_definition, column_position
+         FROM final_view
+         WHERE owner = UPPER(p_dev_name)
+         MINUS
+         SELECT 'INDEX_MISSING_IN_PROD', index_name, table_name, uniqueness, column_definition, column_position
+         FROM final_view
+         WHERE owner = UPPER(p_prod_name))
+        UNION ALL
+        (SELECT 'INDEX_MISSING_IN_DEV' AS reason, index_name, table_name, uniqueness, column_definition, column_position
+         FROM final_view
+         WHERE owner = UPPER(p_prod_name)
+         MINUS
+         SELECT 'INDEX_MISSING_IN_DEV', index_name, table_name, uniqueness, column_definition, column_position
+         FROM final_view
+         WHERE owner = UPPER(p_dev_name))
+    )
+    SELECT t_index_diff(reason, index_name, table_name, uniqueness, column_definition, column_position)
+    BULK COLLECT INTO v_result
+    FROM all_diffs d
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM all_constraints c
+        WHERE c.index_name = d.index_name
+          AND c.owner = CASE 
+                          WHEN d.reason = 'INDEX_MISSING_IN_PROD' THEN UPPER(p_dev_name)
+                          WHEN d.reason = 'INDEX_MISSING_IN_DEV' THEN UPPER(p_prod_name)
+                        END
+    );
+    
+    RETURN v_result;
+END analyze_indexes_filtered;
+/
+
+SELECT * FROM user_errors WHERE name = upper('analyze_indexes_filtered');
+SELECT * FROM analyze_indexes_filtered(:p_dev_name, :p_prod_name);
+
+-- процедуры для модификации
+
+-- процедура для удаления таблиц
+CREATE OR REPLACE PROCEDURE drop_tables(
+    p_dev_name IN VARCHAR2,
+    p_prod_name IN VARCHAR2,
+    p_data IN t_constraint_info_table
+) IS
+BEGIN
+    DBMS_OUTPUT.put_line('-- Удаление лишних таблиц из ' || p_prod_name);
+    FOR i IN 1..p_data.COUNT LOOP
+        IF p_data(i).reason = 'TABLE_MISSING_IN_DEV' THEN
+            DBMS_OUTPUT.put_line('DROP TABLE ' || p_data(i).table_name || ';');
+        END IF;
+    END LOOP;
+END drop_tables;
+/
+
+SELECT * FROM user_errors WHERE name = 'DROP_TABLES';
+
+-- процедура для создания таблиц
+CREATE OR REPLACE PROCEDURE create_tables(
+    p_dev_name IN VARCHAR2,
+    p_prod_name IN VARCHAR2,
+    p_data IN t_constraint_info_table
+) IS
+    CURSOR c_create IS
+        SELECT DISTINCT table_name
+        FROM TABLE(p_data)
+        WHERE reason = 'TABLE_MISSING_IN_PROD';
+BEGIN
+    DBMS_OUTPUT.put_line('-- Создание новых таблиц с временной колонкой dummy_col');
+    FOR rec IN c_create LOOP
+        DBMS_OUTPUT.put_line('CREATE TABLE ' || rec.table_name || ' (dummy_col NUMBER);');
+    END LOOP;
+END create_tables;
+/
+
+SELECT * FROM user_errors WHERE name = 'CREATE_TABLES';
+
+-- процедура для удаления колонок
+CREATE OR REPLACE PROCEDURE drop_columns(
+    p_dev_name IN VARCHAR2,
+    p_prod_name IN VARCHAR2,
+    p_data IN t_constraint_info_table
+) IS
+    CURSOR c_drop_columns IS
+        SELECT table_name, column_name
+        FROM TABLE(p_data) a
+        WHERE reason = 'COLUMN_MISSING_IN_DEV'
+          AND NOT EXISTS (
+              SELECT 1 FROM TABLE(p_data) b
+              WHERE b.reason = 'TABLE_MISSING_IN_DEV' AND b.table_name = a.table_name
+          );
+BEGIN
+    DBMS_OUTPUT.put_line('-- Удаление лишних колонок из ' || p_prod_name);
+    FOR rec IN c_drop_columns LOOP
+        DBMS_OUTPUT.put_line('ALTER TABLE ' || rec.table_name || ' DROP COLUMN ' || rec.column_name || ';');
+    END LOOP;
+END drop_columns;
+/
+
+SELECT * FROM user_errors WHERE name = 'DROP_COLUMNS';
+
+SELECT * FROM all_tab_columns WHERE owner = 'DEV';
+
+-- процедура для добавления колонок
+CREATE OR REPLACE PROCEDURE add_columns(
+    p_dev_name IN VARCHAR2,
+    p_prod_name IN VARCHAR2,
+    p_data IN t_constraint_info_table
+) IS
+    v_full_type VARCHAR2(4000);
+    CURSOR c_add IS
+        SELECT DISTINCT table_name, column_name
+        FROM TABLE(p_data)
+        WHERE reason = 'COLUMN_MISSING_IN_PROD';
+BEGIN
+    DBMS_OUTPUT.put_line('-- Добавление недостающих колонок из ' || p_dev_name);
+    FOR rec IN c_add LOOP
+        BEGIN
+            SELECT 
+                data_type || 
+                CASE 
+                    WHEN data_type IN ('VARCHAR2', 'CHAR') THEN '(' || data_length || ')'
+                    WHEN data_type = 'NUMBER' AND data_precision IS NOT NULL THEN 
+                        '(' || data_precision || ',' || NVL(data_scale, 0) || ')'
+                    WHEN data_type = 'NUMBER' THEN ''
+                    WHEN data_type IN ('DATE', 'TIMESTAMP') THEN ''
+                    ELSE ''
+                END
+            INTO v_full_type
+            FROM all_tab_columns
+            WHERE owner = UPPER(p_dev_name)
+              AND table_name = rec.table_name
+              AND column_name = rec.column_name
+              AND ROWNUM = 1;
+              
+            DBMS_OUTPUT.put_line('ALTER TABLE ' || rec.table_name || 
+                                 ' ADD ' || rec.column_name || ' ' || v_full_type || ';');
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                DBMS_OUTPUT.put_line('-- Не удалось определить тип для ' || rec.table_name || '.' || rec.column_name);
+        END;
+    END LOOP;
+END add_columns;
+/
+
+SELECT * FROM user_errors WHERE name = 'ADD_COLUMNS';
+
+-- процедура для удаления ограничений
+CREATE OR REPLACE PROCEDURE drop_constraints(
+    p_dev_name IN VARCHAR2,
+    p_prod_name IN VARCHAR2,
+    p_data IN t_constraint_info_table
+) IS
+    CURSOR c_drop_constraints IS
+        SELECT DISTINCT ac.constraint_name, ac.table_name
+        FROM TABLE(p_data) a
+        INNER JOIN all_constraints ac 
+            ON ac.constraint_type = a.constraint_type
+            AND ac.table_name = a.table_name
+            AND NVL(ac.search_condition_vc, '#NULL#') = NVL(a.search_condition_vc, '#NULL#')
+            AND NVL(ac.delete_rule, '#NULL#') = NVL(a.delete_rule, '#NULL#')
+        LEFT JOIN all_cons_columns acc 
+            ON ac.owner = acc.owner AND ac.constraint_name = acc.constraint_name
+        LEFT JOIN all_constraints p_ac 
+            ON ac.owner = p_ac.owner AND ac.r_constraint_name = p_ac.constraint_name
+        LEFT JOIN all_cons_columns p_acc 
+            ON p_ac.owner = p_acc.owner AND p_ac.constraint_name = p_acc.constraint_name 
+            AND acc.position = p_acc.position
+        WHERE a.reason = 'CONSTRAINT_MISSING_IN_DEV'
+          AND ac.owner = UPPER(p_prod_name)
+          AND (acc.column_name = a.column_name OR (acc.column_name IS NULL AND a.column_name IS NULL))
+          AND (acc.position = a.position OR (acc.position IS NULL AND a.position IS NULL))
+          AND (p_ac.constraint_type = a.parent_constraint_type OR (p_ac.constraint_type IS NULL AND a.parent_constraint_type IS NULL))
+          AND (p_ac.table_name = a.parent_table_name OR (p_ac.table_name IS NULL AND a.parent_table_name IS NULL))
+          AND (p_acc.column_name = a.parent_column_name OR (p_acc.column_name IS NULL AND a.parent_column_name IS NULL))
+          AND (p_ac.search_condition_vc = a.parent_search_condition_vc OR (p_ac.search_condition_vc IS NULL AND a.parent_search_condition_vc IS NULL))
+          AND (p_ac.delete_rule = a.parent_delete_rule OR (p_ac.delete_rule IS NULL AND a.parent_delete_rule IS NULL))
+          AND (p_acc.position = a.parent_position OR (p_acc.position IS NULL AND a.parent_position IS NULL));
+
+    v_column_name all_cons_columns.column_name%TYPE;
+    v_is_identity INTEGER;
+    TYPE t_const_names IS TABLE OF VARCHAR2(128);
+    v_printed_const t_const_names := t_const_names();
+    
+    TYPE t_identity_keys IS TABLE OF VARCHAR2(4000);
+    v_identity_done t_identity_keys := t_identity_keys();
+    v_key_str VARCHAR2(4000);
+    
+    v_already BOOLEAN;
+    v_found BOOLEAN;
+BEGIN
+    DBMS_OUTPUT.put_line('-- Удаление лишних ограничений из ' || p_prod_name);
+    FOR rec IN c_drop_constraints LOOP
+        v_already := FALSE;
+        FOR i IN 1..v_printed_const.COUNT LOOP
+            IF v_printed_const(i) = rec.constraint_name THEN
+                v_already := TRUE;
+                EXIT;
+            END IF;
+        END LOOP;
+        IF NOT v_already THEN
+            v_printed_const.EXTEND;
+            v_printed_const(v_printed_const.LAST) := rec.constraint_name;
+            
+            BEGIN
+                SELECT acc.column_name INTO v_column_name
+                FROM all_cons_columns acc
+                WHERE acc.owner = UPPER(p_prod_name)
+                  AND acc.constraint_name = rec.constraint_name
+                  AND ROWNUM = 1;
+                  
+                -- является ли колонка identity
+                SELECT COUNT(*) INTO v_is_identity
+                FROM all_tab_columns tc
+                WHERE tc.owner = UPPER(p_prod_name)
+                  AND tc.table_name = rec.table_name
+                  AND tc.column_name = v_column_name
+                  AND tc.identity_column = 'YES';
+                  
+                IF v_is_identity > 0 THEN
+                    v_key_str := rec.table_name || ':' || v_column_name;
+                    v_found := FALSE;
+                    FOR i IN 1..v_identity_done.COUNT LOOP
+                        IF v_identity_done(i) = v_key_str THEN
+                            v_found := TRUE;
+                            EXIT;
+                        END IF;
+                    END LOOP;
+                    IF NOT v_found THEN
+                        v_identity_done.EXTEND;
+                        v_identity_done(v_identity_done.LAST) := v_key_str;
+                        DBMS_OUTPUT.put_line('ALTER TABLE ' || rec.table_name || ' MODIFY ' || v_column_name || ' DROP IDENTITY;');
+                    ELSE
+                        DBMS_OUTPUT.put_line('ALTER TABLE ' || rec.table_name || ' DROP CONSTRAINT ' || rec.constraint_name || ';');
+                    END IF;
+                ELSE
+                    DBMS_OUTPUT.put_line('ALTER TABLE ' || rec.table_name || ' DROP CONSTRAINT ' || rec.constraint_name || ';');
+                END IF;
+            EXCEPTION
+                WHEN NO_DATA_FOUND THEN
+                    DBMS_OUTPUT.put_line('ALTER TABLE ' || rec.table_name || ' DROP CONSTRAINT ' || rec.constraint_name || ';');
+            END;
+        END IF;
+    END LOOP;
+END drop_constraints;
+/
+
+SELECT * FROM user_errors WHERE name = upper('drop_constraints');
+
+-- процедура для добавления ограничений
+CREATE OR REPLACE PROCEDURE add_constraints(
+    p_dev_name IN VARCHAR2,
+    p_prod_name IN VARCHAR2,
+    p_data IN t_constraint_info_table
+) IS
+    CURSOR c_constraints IS
+        SELECT DISTINCT ac.constraint_name, ac.table_name, ac.constraint_type,
+               ac.search_condition_vc, ac.delete_rule,
+               (SELECT table_name FROM all_constraints 
+                WHERE owner = ac.owner AND constraint_name = ac.r_constraint_name) AS parent_table
+        FROM TABLE(p_data) a
+        INNER JOIN all_constraints ac 
+            ON ac.constraint_type = a.constraint_type
+            AND ac.table_name = a.table_name
+            AND NVL(ac.search_condition_vc, '#NULL#') = NVL(a.search_condition_vc, '#NULL#')
+            AND NVL(ac.delete_rule, '#NULL#') = NVL(a.delete_rule, '#NULL#')
+        WHERE a.reason = 'CONSTRAINT_MISSING_IN_PROD'
+          AND ac.owner = UPPER(p_dev_name)
+		ORDER BY CASE ac.constraint_type 
+                    WHEN 'P' THEN 1 
+                    WHEN 'U' THEN 2 
+                    WHEN 'C' THEN 3 
+                    WHEN 'R' THEN 4 
+                    ELSE 5 
+                 END;
+    
+    v_col_list VARCHAR2(4000);
+    v_parent_col_list VARCHAR2(4000);
+    v_first BOOLEAN;
+BEGIN
+    DBMS_OUTPUT.put_line('-- Добавление недостающих ограничений из ' || p_dev_name);
+    FOR rec IN c_constraints LOOP
+        v_col_list := '';
+        v_first := TRUE;
+        FOR col IN (SELECT column_name 
+                    FROM all_cons_columns 
+                    WHERE owner = UPPER(p_dev_name) AND constraint_name = rec.constraint_name 
+                    ORDER BY position) LOOP
+            IF NOT v_first THEN
+                v_col_list := v_col_list || ', ';
+            END IF;
+            v_col_list := v_col_list || col.column_name;
+            v_first := FALSE;
+        END LOOP;
+        
+        IF rec.constraint_type = 'R' THEN
+            v_parent_col_list := '';
+            v_first := TRUE;
+            FOR col IN (SELECT column_name 
+                        FROM all_cons_columns 
+                        WHERE owner = UPPER(p_dev_name) AND constraint_name = 
+                            (SELECT r_constraint_name FROM all_constraints 
+                             WHERE owner = UPPER(p_dev_name) AND constraint_name = rec.constraint_name)
+                        ORDER BY position) LOOP
+                IF NOT v_first THEN
+                    v_parent_col_list := v_parent_col_list || ', ';
+                END IF;
+                v_parent_col_list := v_parent_col_list || col.column_name;
+                v_first := FALSE;
+            END LOOP;
+        END IF;
+        
+        IF rec.constraint_type = 'P' THEN
+            DBMS_OUTPUT.put_line('ALTER TABLE ' || rec.table_name || ' ADD CONSTRAINT ' || rec.constraint_name || ' PRIMARY KEY (' || v_col_list || ');');
+        ELSIF rec.constraint_type = 'U' THEN
+            DBMS_OUTPUT.put_line('ALTER TABLE ' || rec.table_name || ' ADD CONSTRAINT ' || rec.constraint_name || ' UNIQUE (' || v_col_list || ');');
+        ELSIF rec.constraint_type = 'R' THEN
+            DBMS_OUTPUT.put_line('ALTER TABLE ' || rec.table_name || ' ADD CONSTRAINT ' || rec.constraint_name || ' FOREIGN KEY (' || v_col_list || ') REFERENCES ' || rec.parent_table || ' (' || v_parent_col_list || ')' || 
+                CASE WHEN rec.delete_rule IS NOT NULL AND rec.delete_rule != 'NO ACTION' THEN ' ON DELETE ' || rec.delete_rule ELSE '' END || ';');
+        ELSIF rec.constraint_type = 'C' THEN
+            DBMS_OUTPUT.put_line('ALTER TABLE ' || rec.table_name || ' ADD CONSTRAINT ' || rec.constraint_name || ' CHECK (' || rec.search_condition_vc || ');');
+        END IF;
+    END LOOP;
+END add_constraints;
+/
+
+SELECT * FROM user_errors WHERE name = 'ADD_CONSTRAINTS';
+
+CREATE OR REPLACE PROCEDURE add_dummy_columns(
+    p_dev_name IN VARCHAR2,
+    p_prod_name IN VARCHAR2,
+    p_data IN t_constraint_info_table
+) IS
+    TYPE t_table_hash IS TABLE OF VARCHAR2(1) INDEX BY VARCHAR2(128);
+    v_tables t_table_hash;
+    v_table_name VARCHAR2(128);
+    v_skip BOOLEAN;
+BEGIN
+    FOR i IN 1..p_data.COUNT LOOP
+        IF p_data(i).reason IN ('COLUMN_MISSING_IN_DEV', 'COLUMN_MISSING_IN_PROD') THEN
+            v_table_name := p_data(i).table_name;
+            v_skip := FALSE;
+            FOR j IN 1..p_data.COUNT LOOP
+                IF p_data(j).reason = 'TABLE_MISSING_IN_DEV' AND p_data(j).table_name = v_table_name THEN
+                    v_skip := TRUE;
+                    EXIT;
+                END IF;
+            END LOOP;
+            IF NOT v_skip THEN
+                FOR j IN 1..p_data.COUNT LOOP
+                    IF p_data(j).reason = 'TABLE_MISSING_IN_PROD' AND p_data(j).table_name = v_table_name THEN
+                        v_skip := TRUE;
+                        EXIT;
+                    END IF;
+                END LOOP;
+            END IF;
+            IF NOT v_skip THEN
+                v_tables(v_table_name) := 'Y';
+            END IF;
+        END IF;
+    END LOOP;
+    
+    IF v_tables.COUNT > 0 THEN
+        DBMS_OUTPUT.put_line('-- Добавление временной колонки dummy_col');
+        v_table_name := v_tables.FIRST;
+        WHILE v_table_name IS NOT NULL LOOP
+            DBMS_OUTPUT.put_line('ALTER TABLE ' || v_table_name || ' ADD (dummy_col NUMBER);');
+            v_table_name := v_tables.NEXT(v_table_name);
+        END LOOP;
+    END IF;
+END add_dummy_columns;
+/
+
+SELECT * FROM user_errors WHERE name = upper('add_dummy_columns');
+
+CREATE OR REPLACE PROCEDURE drop_dummy_columns(
+    p_dev_name IN VARCHAR2,
+    p_prod_name IN VARCHAR2,
+    p_data IN t_constraint_info_table
+) IS
+    TYPE t_table_hash IS TABLE OF VARCHAR2(1) INDEX BY VARCHAR2(128);
+    v_tables t_table_hash;
+    v_table_name VARCHAR2(128);
+    v_skip BOOLEAN;
+BEGIN
+    FOR i IN 1..p_data.COUNT LOOP
+        IF p_data(i).reason IN ('COLUMN_MISSING_IN_DEV', 'COLUMN_MISSING_IN_PROD') THEN
+            v_table_name := p_data(i).table_name;
+            v_skip := FALSE;
+            FOR j IN 1..p_data.COUNT LOOP
+                IF p_data(j).reason = 'TABLE_MISSING_IN_DEV' AND p_data(j).table_name = v_table_name THEN
+                    v_skip := TRUE;
+                    EXIT;
+                END IF;
+            END LOOP;
+            IF NOT v_skip THEN
+                v_tables(v_table_name) := 'Y';
+            END IF;
+        END IF;
+    END LOOP;
+    FOR i IN 1..p_data.COUNT LOOP
+        IF p_data(i).reason = 'TABLE_MISSING_IN_PROD' THEN
+            v_tables(p_data(i).table_name) := 'Y';
+        END IF;
+    END LOOP;
+    
+    IF v_tables.COUNT > 0 THEN
+        DBMS_OUTPUT.put_line('-- Удаление временной колонки dummy_col');
+        v_table_name := v_tables.FIRST;
+        WHILE v_table_name IS NOT NULL LOOP
+            DBMS_OUTPUT.put_line('ALTER TABLE ' || v_table_name || ' DROP COLUMN dummy_col;');
+            v_table_name := v_tables.NEXT(v_table_name);
+        END LOOP;
+    END IF;
+END drop_dummy_columns;
+/
+
+SELECT * FROM user_errors WHERE name = upper('drop_dummy_columns');
+
+-- процедура для удаления процедур, функций, пакетов
+CREATE OR REPLACE PROCEDURE drop_plsql(
+    p_dev_name IN VARCHAR2,
+    p_prod_name IN VARCHAR2,
+    p_data IN t_sort_source_items
+) IS
+    TYPE t_obj IS RECORD (name VARCHAR2(128), type VARCHAR2(30));
+    TYPE t_obj_list IS TABLE OF t_obj;
+    v_printed t_obj_list := t_obj_list();
+    v_new_obj t_obj;
+    v_already BOOLEAN;
+BEGIN
+    DBMS_OUTPUT.put_line('-- Удаление лишних объектов PL/SQL из ' || p_prod_name);
+    FOR i IN 1..p_data.COUNT LOOP
+        IF p_data(i).delete_order IS NOT NULL THEN
+            v_new_obj.name := p_data(i).original_name;
+            v_new_obj.type := p_data(i).original_type;
+            v_already := FALSE;
+            FOR j IN 1..v_printed.COUNT LOOP
+                IF v_printed(j).name = v_new_obj.name AND v_printed(j).type = v_new_obj.type THEN
+                    v_already := TRUE;
+                    EXIT;
+                END IF;
+            END LOOP;
+            IF NOT v_already THEN
+                v_printed.EXTEND;
+                v_printed(v_printed.LAST) := v_new_obj;
+                CASE p_data(i).original_type
+                    WHEN 'PACKAGE BODY' THEN
+                        DBMS_OUTPUT.put_line('DROP PACKAGE BODY ' || p_data(i).original_name || ';');
+                    WHEN 'PACKAGE' THEN
+                        DBMS_OUTPUT.put_line('DROP PACKAGE ' || p_data(i).original_name || ';');
+                    WHEN 'PROCEDURE' THEN
+                        DBMS_OUTPUT.put_line('DROP PROCEDURE ' || p_data(i).original_name || ';');
+                    WHEN 'FUNCTION' THEN
+                        DBMS_OUTPUT.put_line('DROP FUNCTION ' || p_data(i).original_name || ';');
+                    ELSE NULL;
+                END CASE;
+            END IF;
+        END IF;
+    END LOOP;
+END drop_plsql;
+/
+
+SELECT * FROM user_errors WHERE name = 'DROP_PLSQL';
+
+SELECT * FROM all_source
+WHERE owner = 'DEV'
+ORDER BY 2, 4;
+
+-- процедура для добавления процедур, функций, пакетов
+CREATE OR REPLACE PROCEDURE create_plsql(
+    p_dev_name IN VARCHAR2,
+    p_prod_name IN VARCHAR2,
+    p_data IN t_sort_source_items
+) IS
+    v_text CLOB;
+    v_line VARCHAR2(4000);
+    CURSOR c_source(p_owner VARCHAR2, p_name VARCHAR2, p_type VARCHAR2) IS
+        SELECT text
+        FROM all_source
+        WHERE owner = UPPER(p_owner)
+          AND name = p_name
+          AND type = p_type
+        ORDER BY line;
+BEGIN
+    DBMS_OUTPUT.put_line('-- Создание/замена объектов PL/SQL из ' || p_dev_name);
+    FOR i IN 1..p_data.COUNT LOOP
+        IF p_data(i).insert_order IS NOT NULL THEN
+            v_text := NULL;
+            FOR rec IN c_source(p_dev_name, p_data(i).original_name, p_data(i).original_type) LOOP
+                v_text := v_text || rec.text;
+            END LOOP;
+            IF v_text IS NOT NULL THEN
+                DBMS_OUTPUT.put_line('CREATE OR REPLACE '|| v_text);
+                DBMS_OUTPUT.put_line('/');
+            ELSE
+                DBMS_OUTPUT.put_line('-- Не удалось получить исходный код для ' || p_data(i).original_name);
+            END IF;
+        END IF;
+    END LOOP;
+END create_plsql;
+/
+
+SELECT * FROM user_errors WHERE name = 'CREATE_PLSQL';
+
+-- процедура для удаления индексов
+CREATE OR REPLACE PROCEDURE drop_indexes(
+    p_dev_name IN VARCHAR2,
+    p_prod_name IN VARCHAR2,
+    p_data IN t_index_diff_table
+) IS
+    CURSOR c_drop IS
+        SELECT DISTINCT index_name
+        FROM TABLE(p_data)
+        WHERE reason = 'INDEX_MISSING_IN_DEV';
+BEGIN
+    DBMS_OUTPUT.put_line('-- Удаление лишних индексов из ' || p_prod_name);
+    FOR rec IN c_drop LOOP
+        DBMS_OUTPUT.put_line('DROP INDEX ' || rec.index_name || ';');
+    END LOOP;
+END drop_indexes;
+/
+
+SELECT * FROM user_errors WHERE name = 'DROP_INDEXES';
+
+-- процедура для добавления индексов
+CREATE OR REPLACE PROCEDURE create_indexes(
+    p_dev_name IN VARCHAR2,
+    p_prod_name IN VARCHAR2,
+    p_data IN t_index_diff_table
+) IS
+    CURSOR c_indexes IS
+        SELECT DISTINCT index_name, table_name, uniqueness
+        FROM TABLE(p_data)
+        WHERE reason = 'INDEX_MISSING_IN_PROD'
+        ORDER BY index_name;
+    
+    v_col_list VARCHAR2(4000);
+    v_first BOOLEAN;
+BEGIN
+    DBMS_OUTPUT.put_line('-- Создание недостающих индексов из ' || p_dev_name);
+    FOR idx IN c_indexes LOOP
+        v_col_list := '';
+        v_first := TRUE;
+        FOR col IN (SELECT column_definition
+                    FROM TABLE(p_data)
+                    WHERE reason = 'INDEX_MISSING_IN_PROD'
+                      AND index_name = idx.index_name
+                    ORDER BY column_position) LOOP
+            IF NOT v_first THEN
+                v_col_list := v_col_list || ', ';
+            END IF;
+            v_col_list := v_col_list || col.column_definition;
+            v_first := FALSE;
+        END LOOP;
+        
+        IF idx.uniqueness = 'UNIQUE' THEN
+            DBMS_OUTPUT.put_line('CREATE UNIQUE INDEX ' || idx.index_name || 
+                                 ' ON ' || idx.table_name || ' (' || v_col_list || ');');
+        ELSE
+            DBMS_OUTPUT.put_line('CREATE INDEX ' || idx.index_name || 
+                                 ' ON ' || idx.table_name || ' (' || v_col_list || ');');
+        END IF;
+    END LOOP;
+END create_indexes;
+/
+
+SELECT * FROM user_errors WHERE name = 'CREATE_INDEXES';
+
+
+-- Основная процедура
+CREATE OR REPLACE PROCEDURE make_script(
+    p_dev_name IN VARCHAR2,
+    p_prod_name IN VARCHAR2
+) IS
+    v_data t_constraint_info_table;
+	v_plsql_data t_sort_source_items;
+    v_index_data t_index_diff_table;
+BEGIN
+    v_data := analyze_schema(p_dev_name, p_prod_name);
+	v_plsql_data := analyze_types(p_dev_name, p_prod_name);   
+	v_index_data := analyze_indexes_filtered(p_dev_name, p_prod_name);
+    
+
+    -- удаление
+	drop_indexes(p_dev_name, p_prod_name, v_index_data);
+	drop_constraints(p_dev_name, p_prod_name, v_data);
+    add_dummy_columns(p_dev_name, p_prod_name, v_data);
+	drop_columns(p_dev_name, p_prod_name, v_data);
+    drop_tables(p_dev_name, p_prod_name, v_data);
+    drop_plsql(p_dev_name, p_prod_name, v_plsql_data);
+    
+    -- добавление
+    create_tables(p_dev_name, p_prod_name, v_data);
+    add_columns(p_dev_name, p_prod_name, v_data);
+    drop_dummy_columns(p_dev_name, p_prod_name, v_data);
+    add_constraints(p_dev_name, p_prod_name, v_data);
+    create_indexes(p_dev_name, p_prod_name, v_index_data);
+    create_plsql(p_dev_name, p_prod_name, v_plsql_data);
+END make_script;
+/
+
+SELECT * FROM user_errors WHERE name = 'MAKE_SCRIPT';
+
+SELECT * FROM analyze_schema(:p_dev_name, :p_prod_name);   
+SELECT * FROM analyze_types(:p_dev_name, :p_prod_name);   
+
+CALL make_script(:p_dev_name, :p_prod_name);

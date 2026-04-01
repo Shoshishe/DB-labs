@@ -1,0 +1,336 @@
+cells:
+  - kind: 2
+    value: |-
+      create or replace trigger students_pk_constraint_tg before
+         insert or update of id on students
+         for each row
+      declare
+         duplicate int;
+      begin
+         select count(*)
+           into duplicate
+           from students
+          where id = :new.id;
+         if ( duplicate >= 1 ) then
+            raise dup_val_on_index;
+         end if;
+      end students_pk_constraint_tg;
+      /
+      create or replace trigger groups_pk_constraint_tg before
+         insert or update of id on groups
+         for each row
+      declare
+         duplicate int;
+      begin
+         select count(*)
+           into duplicate
+           from groups
+          where id = :new.id;
+         if ( duplicate >= 1 ) then
+            raise dup_val_on_index;
+         end if;
+      end groups_pk_constraint_tg;
+      /
+      -- create sequence group_id_sk start with 1 increment by 1;
+      -- /
+      -- create sequence students_id_sk start with 1 increment by 1;
+      -- /
+      create or replace trigger group_id_pk before
+         insert on groups
+         for each row
+      begin
+         if :new.id is null then
+            select group_id_sk.nextval
+              into :new.id
+              from dual;
+         end if;
+      end;
+      /
+      create or replace trigger students_id_pk before
+         insert on students
+         for each row
+      begin
+         if :new.id is null then
+            select students_id_sk.nextval
+              into :new.id
+              from dual;
+         end if;
+      end;
+      /
+      create or replace trigger group_name_uq before
+         insert or update of name on groups
+         for each row
+      declare
+         v_exists int;
+      begin
+         select count(*)
+           into v_exists
+           from groups
+          where name = :new.name;
+         if ( v_exists >= 1 ) then
+            raise dup_val_on_index;
+         end if;
+      end;
+    languageId: oracle-sql
+  - kind: 2
+    value: |-
+      create or replace trigger students_group_fk before
+         insert or update of group_id on students
+         for each row
+      declare
+         v_exists int := 0;
+      begin
+         select count(*)
+           into v_exists
+           from groups
+          where id = :new.group_id;
+
+         if ( v_exists < 1 ) then
+            raise dup_val_on_index;
+         end if;
+      end;
+      /
+      create or replace trigger group_students_delete before
+         delete on groups
+         for each row
+      begin
+         delete from students
+          where group_id = :old.id;
+      end;
+    languageId: oracle-sql
+  - kind: 2
+    value: |-
+      -- create table students_log (
+      --    id             number generated always as identity primary key,
+      --    operation_name varchar(6),=
+      --    operation_time timestamp with time zone,
+      --    old_row        clob
+      --       constraint old_json_ck check ( old_row is json ),
+      --    new_row        clob
+      --       constraint new_json_ck check ( new_row is json )
+      -- );
+
+      create or replace trigger students_journal after
+         insert or update or delete on students
+         for each row
+      declare
+         v_new_json json_object_t;
+         v_old_json json_object_t;
+         v_new_clob clob;
+         v_old_clob clob;
+      begin
+         case
+            when inserting then
+               v_new_json := json_object_t.parse('{}');
+               v_new_json.put(
+                  'id',
+                  :new.id
+               );
+               v_new_json.put(
+                  'name',
+                  :new.name
+               );
+               v_new_json.put(
+                  'group_id',
+                  :new.group_id
+               );
+               v_new_clob := v_new_json.to_clob;
+               insert into students_log (
+                  operation_name,
+                  new_row,
+                  operation_time
+               ) values ( 'insert',
+                          v_new_clob,
+                          systimestamp );
+
+            when updating then
+               v_old_json := json_object_t();
+               v_old_json.put(
+                  'id',
+                  :old.id
+               );
+               v_old_json.put(
+                  'name',
+                  :old.name
+               );
+               v_old_json.put(
+                  'group_id',
+                  :old.group_id
+               );
+               v_new_json := json_object_t();
+               v_new_json.put(
+                  'id',
+                  :new.id
+               );
+               v_new_json.put(
+                  'name',
+                  :new.name
+               );
+               v_new_json.put(
+                  'group_id',
+                  :new.group_id
+               );
+               v_new_clob := v_new_json.to_clob;
+               v_old_clob := v_new_json.to_clob;
+               insert into students_log (
+                  operation_name,
+                  new_row,
+                  old_row,
+                  operation_time
+               ) values ( 'update',
+                          v_new_clob,
+                          v_new_clob,
+                          systimestamp );
+
+            when deleting then
+               v_old_json := json_object_t();
+               v_old_json.put(
+                  'id',
+                  :old.id
+               );
+               v_old_json.put(
+                  'name',
+                  :old.name
+               );
+               v_old_json.put(
+                  'group_id',
+                  :old.group_id
+               );
+               v_old_clob := v_old_json.to_clob;
+               insert into students_log (
+                  operation_name,
+                  old_row,
+                  operation_time
+               ) values ( 'delete',
+                          v_old_clob,
+                          systimestamp );
+         end case;
+      end students_journal;
+    languageId: oracle-sql
+  - kind: 2
+    value: |
+      create or replace procedure revert_students_to (
+         moment timestamp with time zone
+      ) is
+      begin
+         for item in (
+            select *
+              from students_log
+             where operation_time >= moment
+             order by operation_time
+         ) loop
+            case
+               when item.operation_name = 'delete' then
+                  insert into students (
+                     id,
+                     group_id,
+                     name
+                  ) values ( json_value(item.old_row,
+                 '$.id' returning number),
+                             json_value(item.old_row,
+                                        '$.group_id' returning number),
+                             json_value(item.old_row,
+                                        '$.name' returning varchar2) );
+
+               when item.operation_name = 'insert' then
+                  delete from students
+                   where id = json_value(item.old_row,
+                 '$.id' returning number);
+
+               when item.operation_name = 'update' then
+                  update students
+                     set students.name = json_value(item.old_row,
+                 '$.name' returning varchar2),
+                         students.group_id = json_value(item.old_row,
+                     '$.group_id' returning number)
+                   where id = json_value(item.old_row,
+                 '$.id' returning number);
+            end case;
+         end loop;
+         delete from students_log
+          where operation_time >= moment;
+      end revert_students_to;
+    languageId: oracle-sql
+  - kind: 2
+    value: |-
+      create or replace procedure revert_students_by (
+         duration interval day to second
+      ) is
+      begin
+         revert_students_to( SYSDATE -  duration);
+      end revert_students_by;
+    languageId: oracle-sql
+  - kind: 2
+    value: |-
+      create or replace trigger groups_ck_tg after
+         insert or update of group_id on students
+         for each row
+      begin
+         case
+            when updating then
+               update groups
+                  set
+                  c_val = c_val-1
+                where id = :old.group_id;
+            else
+               null;
+         end case;
+         update groups
+            set
+            c_val = c_val+1
+          where id = :new.group_id;
+      end;
+      /
+      create or replace trigger groups_ck_dlt_tg after
+         delete on students
+         for each row
+      begin
+         update groups
+            set
+            c_val = c_val - 1
+          where id = :old.group_id;
+      end;
+    languageId: oracle-sql
+  - kind: 2
+    value: |-
+      delete from students;
+      delete from STUDENTS_LOG;
+
+      insert into students (
+         name,
+         group_id
+      ) values ( 'Aliaksandr',
+                 21 );
+      update students
+         set
+         name = 'Alex'
+       where group_id = 21;
+      delete from students;
+      insert into students (
+         name,
+         group_id
+      ) values ( 'Dmitriy',
+                 22 );
+    languageId: oracle-sql
+  - kind: 2
+    value: |-
+      select * from students_log;
+      select * from students;
+    languageId: oracle-sql
+  - kind: 2
+    value: |-
+      select *
+        from groups;
+      select *
+        from students_log;
+      select *
+        from students;
+      call revert_students_to(timestamp '2026-02-02 20:48:43.473 +03:00');
+      select *
+        from students;
+      select *
+        from groups;
+    languageId: oracle-sql
+  - kind: 2
+    value: ""
+    languageId: oracle-sql

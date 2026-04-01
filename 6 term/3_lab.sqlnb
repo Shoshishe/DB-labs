@@ -1,0 +1,816 @@
+cells:
+  - kind: 2
+    value: |-
+      create or replace package schema_utils authid current_user as
+         type tables is
+            table of dba_objects.object_name%type;
+         type returnedrec is record (
+               diff_tables    tables,
+               diff_procedure tables,
+               diff_idx       tables,
+               diff_packages  tables
+         );
+         function compare_schemas (
+            dev_schema_name  in varchar2,
+            prod_schema_name in varchar2
+         ) return returnedrec;
+      end schema_utils;
+      /
+      create or replace package body schema_utils as
+         function compare_schemas (
+            dev_schema_name  in varchar2,
+            prod_schema_name in varchar2
+         ) return returnedrec as
+            rec returnedrec;
+         begin
+            select *
+            bulk collect
+              into rec.diff_tables
+              from (
+               select t1.object_name
+                 from dba_objects t1
+                where object_type = 'TABLE'
+                  and owner = upper(dev_schema_name)
+                  and not exists (
+                  select 1
+                    from dba_objects t2
+                   where ( object_type = 'TABLE'
+                     and owner = upper(prod_schema_name)
+                     and t1.object_name = t2.object_name )
+               )
+               union all
+               select distinct t1.object_name
+                 from dba_objects t1
+                where t1.object_type = 'TABLE'
+                  and exists (
+                  (
+                     select cols2.column_name,
+                            cols2.nullable,
+                            cols2.data_type
+                       from all_tab_cols cols2
+                      where ( upper(prod_schema_name) ) = ( cols2.owner )
+                        and ( t1.object_name ) = ( cols2.table_name )
+                     except
+                     select cols.column_name,
+                            cols.nullable,
+                            cols.data_type
+                       from all_tab_cols cols
+                      where upper(dev_schema_name) = cols.owner
+                        and t1.object_name = cols.table_name
+                  )
+               )
+            );
+
+            select *
+            bulk collect
+              into rec.diff_procedure
+              from (
+               select t1.object_name
+                 from dba_objects t1
+                where object_type = 'PROCEDURE'
+                  and owner = upper(dev_schema_name)
+                  and not exists (
+                  select 1
+                    from dba_objects t2
+                   where ( object_type = 'PROCEDURE'
+                     and owner = upper(prod_schema_name)
+                     and t1.object_name = t2.object_name )
+               )
+               union all
+               select distinct t1.object_name
+                 from dba_objects t1
+                where t1.object_type = 'PROCEDURE'
+                  and exists (
+                  (
+                     select cols2.line,
+                            cols2.text
+                       from (
+                        select line,
+                               text
+                          from dba_source
+                         where name = t1.object_name
+                           and owner = upper(dev_schema_name)
+                     ) cols2
+                     except
+                     select cols.line,
+                            cols.text
+                       from (
+                        select line,
+                               text
+                          from dba_source
+                         where name = t1.object_name
+                           and owner = upper(prod_schema_name)
+                     ) cols
+                  )
+               )
+            );
+
+
+            select *
+            bulk collect
+              into rec.diff_idx
+              from (
+               select t1.object_name
+                 from dba_objects t1
+                where object_type = 'INDEX'
+                  and owner = upper(dev_schema_name)
+                  and not exists (
+                  select 1
+                    from dba_objects t2
+                   where ( object_type = 'INDEX'
+                     and owner = upper(prod_schema_name)
+                     and t1.object_name = t2.object_name )
+               )
+               union all
+               select distinct t1.object_name
+                 from dba_objects t1
+                where t1.object_type = 'INDEX'
+                  and exists (
+                  (
+                     select cols2.index_type,
+                            cols2.uniqueness,
+                            cols2.table_owner,
+                            cols2.table_name
+                       from (
+                        select index_type,
+                               uniqueness,
+                               table_owner,
+                               table_name
+                          from dba_indexes
+                         where index_name = t1.object_name
+                           and owner = upper(dev_schema_name)
+                     ) cols2
+                     except
+                     select cols.index_type,
+                            cols.uniqueness,
+                            cols.table_owner,
+                            cols.table_name
+                       from (
+                        select index_type,
+                               uniqueness,
+                               table_owner,
+                               table_name
+                          from dba_indexes
+                         where index_name = t1.object_name
+                           and owner = upper(prod_schema_name)
+                     ) cols
+                  )
+               )
+            );
+
+            select *
+            bulk collect
+              into rec.diff_packages
+              from (
+               select t1.object_name
+                 from dba_objects t1
+                where object_type = 'PACKAGE'
+                  and owner = upper(dev_schema_name)
+                  and not exists (
+                  select 1
+                    from dba_objects t2
+                   where ( object_type = 'PACKAGE'
+                     and owner = upper(prod_schema_name)
+                     and t1.object_name = t2.object_name )
+               )
+               union all
+               select distinct t1.object_name
+                 from dba_objects t1
+                where t1.object_type = 'PACKAGE'
+                  and exists (
+                  (
+                     select cols2.line,
+                            cols2.text
+                       from (
+                        select line,
+                               text
+                          from dba_source
+                         where name = t1.object_name
+                           and owner = upper(dev_schema_name) offset 1 rows
+                     ) cols2
+                     except
+                     select cols.line,
+                            cols.text
+                       from (
+                        select line,
+                               text
+                          from dba_source
+                         where name = t1.object_name
+                           and owner = upper(prod_schema_name) offset 1 rows
+                     ) cols
+                  )
+               )
+            );
+         
+
+         -- if selected_tables.first is null then
+         --    dbms_output.put_line('You are a lucky one, no diff there!');
+         --    return;
+         -- end if;
+         -- for i in selected_tables.first..selected_tables.last loop
+         --    dbms_output.put_line(selected_tables(i));
+         -- end loop;
+
+            return rec;
+         end compare_schemas;
+
+
+
+      end schema_utils;
+      /
+      declare
+         a schema_utils.returnedrec;
+      begin
+         a := schema_utils.compare_schemas(
+            'shosh',
+            'ABC'
+         );
+         for i in a.diff_procedure.first..a.diff_procedure.last loop
+            dbms_output.put_line(a.diff_procedure(i));
+         end loop;
+      end;
+    languageId: oracle-sql
+  - kind: 2
+    value: |-
+      create or replace package dependencies_utils as
+         type path is
+            table of number index by varchar2(500);
+         function table_dependencies (
+            p_table_name in varchar2,
+            table_owner  in varchar2
+         ) return path;
+
+         function other_dependencies (
+            type       in varchar2,
+            other_name in varchar2,
+            owner      in varchar2
+         ) return path;
+      end dependencies_utils;
+      /
+      create or replace package body dependencies_utils as
+         function table_dependencies (
+            p_table_name in varchar2,
+            table_owner  in varchar2
+         ) return path as
+            cur_path path;
+         begin
+            cur_path(p_table_name) := 0;
+            for rec in (
+               select level as depth,
+                      parent_table,
+                      child_table,
+                      connect_by_iscycle as is_circular
+                 from (
+                  select a.table_name as child_table,
+                         b.table_name as parent_table
+                    from all_constraints a
+                    join all_constraints b
+                  on a.r_constraint_name = b.constraint_name
+                   where a.constraint_type = 'R'
+                     and a.owner = b.owner
+                     and a.owner = table_owner
+               ) src
+               start with
+                  src.child_table = upper(p_table_name)
+               connect by nocycle
+                  prior src.parent_table = src.child_table
+            ) loop
+               cur_path(rec.child_table) := rec.depth;
+               if ( rec.is_circular = 1 ) then
+                  dbms_output.put_line('Cirricular dependency of '
+                                       || rec.parent_table
+                                       || 'on ' || p_table_name);
+               end if;
+            end loop;
+            return cur_path;
+         end table_dependencies;
+
+
+         function other_dependencies (
+            type       in varchar2,
+            other_name in varchar2,
+            owner      in varchar2
+         ) return path as
+            cur_path path;
+         begin
+            cur_path(other_name) := 0;
+            for rec in (
+               select level as depth,
+                      referenced_name,
+                      name,
+                      connect_by_iscycle as is_circular
+                 from all_dependencies d
+                where d.owner = owner
+                  and referenced_type = upper(type) start with
+                  name = upper(other_name)
+               connect by nocycle
+                  prior referenced_name = name
+            ) loop
+               cur_path(rec.referenced_name) := rec.depth;
+               if ( rec.is_circular = 1 ) then
+                  dbms_output.put_line('Cirricular dependency of '
+                                       || rec.name
+                                       || 'on ' || rec.referenced_name);
+               end if;
+            end loop;
+            return cur_path;
+         end other_dependencies;
+
+      end dependencies_utils;
+      /
+      declare
+         a   dependencies_utils.path;
+         key varchar2(500);
+      begin
+         a := dependencies_utils.table_dependencies(
+            'RND_TABLE_REFERENCER',
+            'SHOSH'
+         );
+         if a.first is null then
+            dbms_output.put_line('You are a lucky one, no diff there!');
+            return;
+         end if;
+         key := a.first;
+         while key is not null loop
+            key := a.next(key);
+         end loop;
+
+      end;
+    languageId: oracle-sql
+  - kind: 2
+    value: >-
+      declare
+         tables          schema_utils.tables;
+         rec             schema_utils.returnedrec;
+         tree            dependencies_utils.path;
+         total_tree      dependencies_utils.path;
+         key             varchar2(500);
+         type path_entry is record (
+               key   varchar2(500),
+               value number
+         );
+         type path_tables_list is
+            table of path_entry;
+         tables_list     path_tables_list := path_tables_list();
+         packages_list   path_tables_list := path_tables_list();
+         procedures_list path_tables_list := path_tables_list();
+         temp_path       path_entry;
+         output          clob;
+      begin
+         rec := schema_utils.compare_schemas(
+            'shosh',
+            'ABC'
+         );
+         tables := rec.diff_tables;
+         if tables.first is null then
+            dbms_output.put_line('You are a lucky one, no diff in tables!');
+            return;
+         else
+            for i in tables.first..tables.last loop
+               tree := dependencies_utils.table_dependencies(
+                  tables(i),
+                  'SHOSH'
+               );
+               key := tree.first;
+               while key is not null loop
+                  if not key member of tables then
+                     tree.delete(key);
+                  end if;
+                  key := tree.next(key);
+               end loop;
+
+
+               key := tree.first;
+               while key is not null loop
+                  if not total_tree.exists(key)
+                  or total_tree(key) < tree(key) then
+                     total_tree(key) := tree(key);
+                  end if;
+                  key := tree.next(key);
+               end loop;
+            end loop;
+
+            key := total_tree.first;
+            while key is not null loop
+               tables_list.extend;
+               tables_list(tables_list.last) := path_entry(
+                  key,
+                  (total_tree(key))
+               );
+               key := total_tree.next(key);
+            end loop;
+
+
+            for i in tables_list.first..tables_list.count - 1 loop
+               for j in tables_list.first..tables_list.count - i loop
+                  if tables_list(j).value > tables_list(j + 1).value then
+                     temp_path := tables_list(j);
+                     tables_list(j) := tables_list(j + 1);
+                     tables_list(j + 1) := temp_path;
+                  end if;
+               end loop;
+            end loop;
+
+
+            dbms_metadata.set_transform_param(
+               dbms_metadata.session_transform,
+               'SEGMENT_ATTRIBUTES',
+               false
+            );
+            dbms_metadata.set_transform_param(
+               dbms_metadata.session_transform,
+               'STORAGE',
+               false
+            );
+            dbms_metadata.set_transform_param(
+               dbms_metadata.session_transform,
+               'TABLESPACE',
+               false
+            );
+
+         
+            for i in tables_list.first..tables_list.last loop
+               select dbms_metadata.get_ddl(
+                  'TABLE',
+                  tables_list(i).key,
+                  'SHOSH'
+               )
+                 into output
+                 from dual;
+               dbms_output.put_line(output);
+            end loop;
+         end if;
+
+
+
+         tables := rec.diff_packages;
+         tree.delete;
+         total_tree.delete;
+         if tables.first is null then
+            dbms_output.put_line('You are a lucky one, no diff in packages!');
+            return;
+         else
+            for i in tables.first..tables.last loop
+               tree := dependencies_utils.other_dependencies(
+                  'PACKAGE',
+                  tables(i),
+                  'SHOSH'
+               );
+               key := tree.first;
+               while key is not null loop
+                  if not key member of tables then
+                     tree.delete(key);
+                  end if;
+                  key := tree.next(key);
+               end loop;
+
+
+               key := tree.first;
+               while key is not null loop
+                  if not total_tree.exists(key)
+                  or total_tree(key) < tree(key) then
+                     total_tree(key) := tree(key);
+                  end if;
+                  key := tree.next(key);
+               end loop;
+            end loop;
+
+            key := total_tree.first;
+            while key is not null loop
+               packages_list.extend;
+               packages_list(packages_list.last) := path_entry(
+                  key,
+                  (total_tree(key))
+               );
+               key := total_tree.next(key);
+            end loop;
+
+
+            for i in packages_list.first..packages_list.count - 1 loop
+               for j in packages_list.first..packages_list.count - i loop
+                  if packages_list(j).value > packages_list(j + 1).value then
+                     temp_path := packages_list(j);
+                     packages_list(j) := packages_list(j + 1);
+                     packages_list(j + 1) := temp_path;
+                  end if;
+               end loop;
+            end loop;
+
+            for i in packages_list.first..packages_list.last loop
+               select dbms_metadata.get_ddl(
+                  'PACKAGE',
+                  packages_list(i).key,
+                  'SHOSH'
+               )
+                 into output
+                 from dual;
+               dbms_output.put_line(output);
+            end loop;
+         end if;
+
+         tables := rec.diff_procedure;
+         tree.delete;
+         total_tree.delete;
+         if tables.first is null then
+            dbms_output.put_line('You are a lucky one, no diff in procedures!');
+            return;
+         else
+            for i in tables.first..tables.last loop
+               tree := dependencies_utils.other_dependencies(
+                  'PROCEDURE',
+                  tables(i),
+                  'SHOSH'
+               );
+               key := tree.first;
+               while key is not null loop
+                  if not key member of tables then
+                     tree.delete(key);
+                  end if;
+                  key := tree.next(key);
+               end loop;
+
+
+               key := tree.first;
+               while key is not null loop
+                  if not total_tree.exists(key)
+                  or total_tree(key) < tree(key) then
+                     total_tree(key) := tree(key);
+                  end if;
+                  key := tree.next(key);
+               end loop;
+            end loop;
+            tables_list.delete;
+            key := total_tree.first;
+            while key is not null loop
+               tables_list.extend;
+               tables_list(tables_list.last) := path_entry(
+                  key,
+                  (total_tree(key))
+               );
+               key := total_tree.next(key);
+            end loop;
+
+
+            for i in tables_list.first..tables_list.count - 1 loop
+               for j in tables_list.first..tables_list.count - i loop
+                  if tables_list(j).value > tables_list(j + 1).value then
+                     temp_path := tables_list(j);
+                     tables_list(j) := tables_list(j + 1);
+                     tables_list(j + 1) := temp_path;
+                  end if;
+               end loop;
+            end loop;
+
+            for i in tables_list.first..tables_list.last loop
+               select dbms_metadata.get_ddl(
+                  'PROCEDURE',
+                  tables_list(i).key,
+                  'SHOSH'
+               )
+                 into output
+                 from dual;
+               dbms_output.put_line(output);
+            end loop;
+         end if;
+
+
+
+         tables := rec.diff_idx;
+         tree.delete;
+         total_tree.delete;
+         if tables.first is null then
+            dbms_output.put_line('You are a lucky one, no diff in indexes!');
+            return;
+         else
+            for i in tables.first..tables.last loop
+               select dbms_metadata.get_ddl(
+                  'INDEX',
+                  tables(i),
+                  'SHOSH'
+               )
+                 into output
+                 from dual;
+               dbms_output.put_line(output);
+            end loop;
+         end if;
+
+
+         rec := schema_utils.compare_schemas(
+            'ABC',
+            'shosh'
+         );
+         tables := rec.diff_idx;
+         tree.delete;
+         total_tree.delete;
+         if tables.first is null then
+            dbms_output.put_line('You are a lucky one, nothing to delete in indexes!');
+            return;
+         else
+            for i in tables.first..tables.last loop
+               dbms_output.put_line('DROP INDEX '
+                                    || tables(i) || ';');
+            end loop;
+         end if;
+
+
+         tables := rec.diff_tables;
+         tree.delete;
+         total_tree.delete;
+         if tables.first is null then
+            dbms_output.put_line('You are a lucky one, nothing to delete in indexes!');
+            return;
+         else
+            for i in tables.first..tables.last loop
+               dbms_output.put_line('DROP TABLE '
+                                    || tables(i) || ' CASCADE CONSTRAINTS;');
+            end loop;
+         end if;
+
+         tables := rec.diff_packages;
+         tree.delete;
+         total_tree.delete;
+         if tables.first is null then
+            dbms_output.put_line('You are a lucky one, nothing to delete in packages!');
+            return;
+         else
+            for i in tables.first..tables.last loop
+               dbms_output.put_line('DROP PACKAGE '
+                                    || tables(i) || ';');
+            end loop;
+         end if;
+
+         tables := rec.diff_procedure;
+         tree.delete;
+         total_tree.delete;
+         if tables.first is null then
+            dbms_output.put_line('You are a lucky one, nothing to delete in procedures!');
+            return;
+         else
+            for i in tables.first..tables.last loop
+               dbms_output.put_line('DROP PROCEDURE '
+                                    || tables(i) || ';');
+            end loop;
+         end if;
+
+      end;
+    languageId: oracle-sql
+  - kind: 2
+    value: |-
+      DESCRIBE ABC.MYTABLE;
+      /
+      alter table abc.mytable modify (
+         val number
+      );
+      DESCRIBE ABC.MYTABLE;
+    languageId: oracle-sql
+  - kind: 2
+    value: |-
+      create or replace package body dependencies_utils as
+         function table_dependencies (
+            p_table_name in varchar2,
+            table_owner  in varchar2
+         ) return path as
+            cur_path path;
+         begin
+            cur_path(p_table_name) := 0;
+            for rec in (
+               select level as depth,
+                      parent_table,
+                      child_table,
+                      connect_by_iscycle as is_circular
+                 from (
+                  select a.table_name as child_table,
+                         b.table_name as parent_table
+                    from all_constraints a
+                    join all_constraints b
+                  on a.r_constraint_name = b.constraint_name
+                   where a.constraint_type = 'R'
+                     and a.owner = b.owner
+                     and a.owner = table_owner
+               ) src
+               start with
+                  src.child_table = upper(p_table_name)
+               connect by nocycle
+                  prior src.parent_table = src.child_table
+            ) loop
+               cur_path(rec.child_table) := rec.depth;
+               if ( rec.is_circular = 1 ) then
+                  dbms_output.put_line('Cirricular dependency of '
+                                       || rec.parent_table
+                                       || 'on ' || p_table_name);
+               end if;
+            end loop;
+            return cur_path;
+         end table_dependencies;
+
+
+         function other_dependencies (
+            type       in varchar2,
+            other_name in varchar2,
+            owner      in varchar2
+         ) return path as
+            cur_path path;
+         begin
+            cur_path(other_name) := 0;
+            for rec in (
+               select level as depth,
+                      referenced_name,
+                      name,
+                      connect_by_iscycle as is_circular
+                 from all_dependencies d
+                where d.owner = owner
+                  and referenced_type = upper(type) start with
+                  name = upper(other_name)
+               connect by nocycle
+                  prior referenced_name = name
+            ) loop
+               cur_path(rec.referenced_name) := rec.depth;
+               if ( rec.is_circular = 1 ) then
+                  dbms_output.put_line('Cirricular dependency of '
+                                       || rec.name
+                                       || 'on ' || rec.referenced_name);
+               end if;
+            end loop;
+            return cur_path;
+         end other_dependencies;
+
+      end dependencies_utils;
+    languageId: oracle-sql
+  - kind: 2
+    value: |-
+      select t1.object_name
+        from dba_objects t1
+       where t1.object_type = 'TABLE'
+         and exists (
+         (
+            select cols2.column_name,
+                   cols2.nullable,
+                   cols2.data_type
+              from all_tab_cols cols2
+             where ( upper('ABC') ) = ( cols2.owner )
+               and ( t1.object_name ) = ( cols2.table_name )
+            except
+            select cols.column_name,
+                   cols.nullable,
+                   cols.data_type
+              from all_tab_cols cols
+             where t1.owner = cols.owner
+               and t1.object_name = cols.table_name
+         )
+      )
+    languageId: oracle-sql
+  - kind: 2
+    value: |-
+      select distinct object_name
+        from dba_objects t1
+       where object_type = 'TABLE'
+         and owner = upper('shosh')
+         and not exists (
+         select 1
+           from dba_objects t2
+          where t2.object_type = 'TABLE'
+            and t1.object_name = t2.object_name
+            and owner = upper('abc')
+             or not exists (
+            select 1
+              from dba_objects
+         )
+      )
+    languageId: oracle-sql
+  - kind: 2
+    value: |-
+      select cols.column_name,
+             cols.nullable,
+             cols.data_type,
+             cols.table_name
+        from all_tab_cols cols
+       where upper('shosh') = cols.owner
+         and 'MyTable' = cols.table_name
+      except
+      select cols2.column_name,
+             cols2.nullable,
+             cols2.data_type,
+             cols2.table_name
+        from all_tab_cols cols2
+       where upper('abc') = cols2.owner
+         and 'MyTable' = cols2.table_name
+    languageId: oracle-sql
+  - kind: 2
+    value: ""
+    languageId: oracle-sql
+  - kind: 2
+    value: |-
+      select a.table_name,
+             b.table_name as parent_table
+        from all_constraints a
+        join all_constraints b
+      on a.r_constraint_name = b.constraint_name
+       where a.constraint_type = 'R'
+         and a.owner = b.owner
+         and a.table_name = 'RND_TABLE_REFERENCER'
+
+                  --subquery to select all deps of a table--
+    languageId: oracle-sql
+  - kind: 2
+    value: ""
+    languageId: oracle-sql
